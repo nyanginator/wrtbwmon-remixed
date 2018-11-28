@@ -1,0 +1,3 @@
+#!/bin/sh
+DIR="$( cd "$( dirname "$0" )" && pwd )"
+$DIR/wrtbwmon reset /tmp/usage.db /tmp/reports $DIR/monthlybkup /tmp/users.txt forget $DIR/bkup

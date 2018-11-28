@@ -1,0 +1,159 @@
+/* wrtbwmon-remixed by Nicholas Yang */
+
+body {
+  font-family: "Lucida Grande", "Lucida Sans Unicode", Arial, Helvetica, sans-serif;
+  margin: 20px 15px;
+}
+
+h1, h2, h3 {
+  min-width: 768px;
+}
+
+h4 {
+  margin: 8px 0 4px 0;
+}
+
+button {
+  padding: 12px 20px;
+  cursor:pointer;
+  background-color: #fff;
+  border: 1px solid #b7b7b7;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+button:hover {
+  background-color: #eee;
+}
+
+.text-small {
+  font-size: 0.8em;
+}
+
+#overtable {
+  border: 1px solid black;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#overtable td {
+  border: 1px solid black;
+  padding: 8px;
+}
+
+#overtable td.rowlabel {
+  font-weight: bold;
+  background-color: lavender;
+}
+
+#summarytable:hover td, #summarytable:hover th {
+  cursor: pointer;
+  background-color: aqua;
+}
+
+.usertable th:hover {
+  cursor: pointer;
+  background-color: gainsboro;
+}
+
+.usertable tr:hover td {
+  cursor: pointer;
+  background-color: aqua;
+}
+
+.usertable, #summarytable {
+  width: 100%;
+  min-width: 708px;
+  border: 1px solid black;
+  border-collapse: collapse;
+}
+
+.usertable td, #summarytable td {
+  border: 1px solid black;
+  padding: 4px;
+}
+
+.usertable th, #summarytable th {
+  border: 1px solid black;
+  padding: 4px;
+  background-color: lavender;
+}
+
+.hidden {
+  display: none;
+}
+
+.graphcontainer {
+  width: 100%;
+  height: 70%;
+  min-width: 480px;
+  min-height: 480px;
+}
+
+.username {
+  font-weight: bold;
+}
+
+.red {
+  color: #f00;
+}
+
+.purple {
+  color: #7e00ff;
+}
+
+.alert {
+  font-style: italic;
+  color: #f00;
+}
+
+.warning {
+  font-style: italic;
+  color: #7e00ff;
+}
+
+.hilite {
+  background-color: #ff0;
+}
+
+.colavg {
+  background-color: #ffcb69;
+}
+
+.coltotal {
+  background-color: #b8ff8d;
+} 
+
+.coltoday {
+  background-color: lemonchiffon;
+} 
+
+div.tabcontents {
+  min-width: 768px;
+} 
+
+div.tabcontents object {
+  width: 100%;
+  height: 100%;
+}
+
+.text-input-wrapper {
+  border:1px solid;
+  padding:1px 6px 1px 1px;
+  display:inline-block;
+}
+
+.text-input-wrapper input {
+  border:none;
+  background:none;
+  outline:none;
+  margin:0 0;
+  font:inherit;
+  padding: 5px;
+}
+
+.text-input-wrapper span {
+  cursor:pointer;
+  color:blue;
+  font-weight:bold;
+  visibility:hidden;
+}

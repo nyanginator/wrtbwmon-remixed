@@ -1,0 +1,57 @@
+#!/bin/sh
+DIR="$( cd "$( dirname "$0" )" && pwd )"
+. $DIR/config
+
+if [ ! -f /tmp/usage.db ]; then
+  echo "[INFO] Restoring ..."
+
+  [ -d /tmp/www/$WWWSUBDIR ] || mkdir -p /tmp/www/$WWWSUBDIR
+
+  if [ -f $DIR/usage.db ]; then
+      cp $DIR/usage.db /tmp
+  fi
+
+  if [ -f $DIR/users.txt ]; then
+      cp $DIR/users.txt /tmp
+  fi
+
+  cp -r $DIR/js /tmp/www/$WWWSUBDIR
+  cp -r $DIR/css /tmp/www/$WWWSUBDIR
+  cp -r $DIR/reports /tmp
+
+  find $DIR -type f -exec chmod a-rwx {} \;
+  find $DIR -type f -exec chmod og+r {} \;
+  find $DIR -type f -exec chmod u+rw {} \;
+
+  find $DIR -type d -exec chmod a-rwx {} \;
+  find $DIR -type d -exec chmod og+rx {} \;
+  find $DIR -type d -exec chmod u+rwx {} \;
+
+  chmod u+x $DIR/backupkeep
+  chmod u+x $DIR/backupmin
+  chmod u+x $DIR/publish
+  chmod u+x $DIR/reset
+  chmod u+x $DIR/restore
+  chmod u+x $DIR/setup
+  chmod u+x $DIR/unp
+  chmod u+x $DIR/update
+  chmod u+x $DIR/wrtbwmon
+
+  chmod og-rwx $DIR/backupkeep
+  chmod og-rwx $DIR/backupmin
+  chmod og-rwx $DIR/publish
+  chmod og-rwx $DIR/reset
+  chmod og-rwx $DIR/restore
+  chmod og-rwx $DIR/setup
+  chmod og-rwx $DIR/unp
+  chmod og-rwx $DIR/update
+  chmod og-rwx $DIR/wrtbwmon
+
+  chmod og-rwx $DIR/config
+
+  $DIR/publish
+
+  echo "[INFO] Restore complete."
+else
+  echo "[WARNING] Found /tmp/usage.db. Restore aborted."
+fi

@@ -1,0 +1,5 @@
+#!/bin/sh
+DIR="$( cd "$( dirname "$0" )" && pwd )"
+. $DIR/config
+
+$DIR/wrtbwmon publish /tmp/usage.db /tmp/reports /tmp/www/$WWWSUBDIR /tmp/users.txt

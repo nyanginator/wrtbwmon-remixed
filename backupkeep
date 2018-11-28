@@ -1,0 +1,7 @@
+#!/bin/sh
+DIR="$( cd "$( dirname "$0" )" && pwd )"
+
+cp /tmp/usage.db $DIR
+cp /tmp/users.txt $DIR
+cp -r /tmp/reports $DIR
+$DIR/wrtbwmon backup /tmp/usage.db /tmp/reports $DIR/bkup /tmp/users.txt keep

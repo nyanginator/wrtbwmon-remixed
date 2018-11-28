@@ -1,0 +1,28 @@
+# Find this value using command: date +%s -d "9/1/15"
+# A full day/month/year MUST pass from this date for it to show up in graph
+AXISSTARTDATE=1420099200
+
+PAGETITLE="Internet Usage"
+HEADING="Resets on 1st of every month." # Or whenever you set cron to reset
+DESCRIPTION=""
+MBTOTALQUOTA=""
+
+WWWSUBDIR=""
+WATCHLISTSTEP="1000"
+
+# You can set a limit per person in every "watch list" defined below. It should
+# include: 1) quota per person, 2) title, 3) array of names to watch. Name array
+# should be unique 1-word names only, separated by spaces.
+# NOTES:
+#   a. If you add a new watch list, wrtbwmon script must also be updated.
+#      Just add another line of publishWatchList() after the others with
+#      the new vars.
+#   b. Prepend "SKIP_" to the name if you want the name to appear in the watch
+#      list but not turned off when over the specified limit.
+MBQUOTAPERSTUDENT="10000"
+STUDENTWATCHLISTTITLE="Students"
+STUDENTWATCHLISTARRAY=""
+
+MBQUOTAPERGUEST="4000"
+GUESTWATCHLISTTITLE="Guests"
+GUESTWATCHLISTARRAY=""

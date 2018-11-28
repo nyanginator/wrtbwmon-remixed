@@ -1,0 +1,1007 @@
+#!/bin/sh
+#
+# Traffic logging tool for DD-WRT based routers
+#
+# This version created by Nicholas Yang
+#
+# Based on original work wrtbwmon by Emmanuel Brucy (e.brucy AT qut.edu.au),
+# which is based on work from:
+#   - Fredrik Erlandsson (erlis AT linux.nu)
+#   - traff_graph script by twist - http://wiki.openwrt.org/RrdTrafficWatch
+#
+
+DIR="$( cd "$( dirname "$0" )" && pwd )"
+. $DIR/config
+
+DATE=`date -u +"%s"`
+DATEHOURADJ=0
+DATE=$((DATE+(DATEHOURADJ*3600)))
+DATESTAMPYEAR=$(date +\%Y -d @${DATE})
+DATESTAMPMONTH=$(date +\%m -d @${DATE})
+DATESTAMPDAY=$(date +\%d -d @${DATE})
+DATESTAMPTIME=$(date +\%H\.\%M.\%S -d @${DATE})
+PREFIX=""
+
+
+LAN_IFACE=$(nvram get lan_ifname)
+
+lock()
+{
+    while [ -f /tmp/wrtbwmon.lock ]; do
+        if [ ! -d /proc/$(cat /tmp/wrtbwmon.lock) ]; then
+            echo "WARNING : Lockfile detected but process $(cat /tmp/wrtbwmon.lock) does not exist !"
+            rm -f /tmp/wrtbwmon.lock
+        fi
+        sleep 1
+    done
+    echo $$ > /tmp/wrtbwmon.lock
+}
+
+unlock()
+{
+    rm -f /tmp/wrtbwmon.lock
+}
+
+publishgraphhtm()
+{
+  DBPATH=$1
+  SUFFIX=$2
+  HTMPATH=$3
+  TITLE=$4
+  AXISRANGE=$5
+  MAC=$6
+
+  if [ -f ${DBPATH} ]; then
+    # RANGE is how far back in time to go, what the first value on the X-axis
+    # should be if we scroll all the way to the beginning of the graph. We
+    # first assume the RANGE and MULTFACT for years, and then change those
+    # values according to SUFFIX if necessary
+    RANGE=5
+    MULTFACT=31536000
+
+    # Offset to account for February and leap years; we want the day in the
+    # middle of the month, if we're calculating for year/month
+    THEDAYTODAY=$(date +\%e -d @${DATE})
+    OFFSET=$(((THEDAYTODAY - 15) * 86400))
+
+    if [ "${SUFFIX}" == "monthly" ]; then
+      RANGE=12
+      MULTFACT=2628000
+    fi
+    if [ "${SUFFIX}" == "daily" ]; then
+      RANGE=14
+      MULTFACT=86400
+      OFFSET=0 # no need for offset when dealing with days
+    fi
+    STARTDATE=$((DATE - RANGE * MULTFACT))
+    STARTDATE=$((STARTDATE - OFFSET))
+
+    echo "<div id=\"graph"${SUFFIX}"\" class=\"graphcontainer\"></div>" > ${HTMPATH}
+    echo "<table class=\"hidden\" id=\"datatable"${SUFFIX}"\" cellpadding=\"4\" border=\"1\"><thead><tr><th></th><th>Total</th><th>Down</th><th>Up</th></tr></thead><tbody>" >> ${HTMPATH}
+
+    YAXISMAX=0
+
+    # Padding days/months/years, we iterate through whole RANGE regardless;
+    # if any day is not consecutive, add that zero entry; if the day is found
+    # (using grep) in the DB file, then use those values instead
+
+    # Need to convert dates into a non-numeric format
+    cat ${DBPATH} | while IFS=, read DBDATE USAGE
+    do
+      DIFF=$((DATE - DBDATE))
+      LABEL=`date +\%Y -d @${DBDATE}`
+      if [ "${SUFFIX}" == "monthly" ]; then
+        LABEL=`date +\%b-\%Y -d @${DBDATE}`
+      fi
+      if [ "${SUFFIX}" == "daily" ]; then
+        LABEL=`date +\%Y-\%b-\%d -d @${DBDATE}`
+      fi
+
+      RANGEDIFF=$((DIFF / MULTFACT))
+      if [ "$RANGEDIFF" -lt "$RANGE" ]; then
+        echo "LABEL,"${LABEL},${DBDATE},${USAGE} >> /tmp/inrange_$$.tmp
+      fi
+    done
+
+    CURRDATE=${STARTDATE}
+    while [ ${CURRDATE} -lt $((DATE + MULTFACT)) ]; do
+      LABEL=`date +\%Y -d @${CURRDATE}`
+      if [ "${SUFFIX}" == "monthly" ]; then
+        LABEL=`date +\%b-\%Y -d @${CURRDATE}`
+      fi
+      if [ "${SUFFIX}" == "daily" ]; then
+        LABEL=`date +\%Y-\%b-\%d -d @${CURRDATE}`
+      fi
+
+      # If our iterator is in the future (i.e. it has a value that is between
+      # $DATE and $((DATE + MULTFACT))), check to see that we haven't gone
+      # past today's year/month/day. We don't want to print future dates.
+      if [ "${CURRDATE}" -gt "${DATE}" ]; then
+        DATECHECK=$((CURRDATE - MULTFACT))
+        DATECHECKYEAR=$(date +\%Y -d @${DATECHECK})
+        DATECHECKMONTH=$(date +\%m -d @${DATECHECK})
+        DATECHECKDAY=$(date +\%d -d @${DATECHECK})
+        if ([ "${SUFFIX}" == "daily" ] && [ "${DATESTAMPDAY}" -eq "${DATECHECKDAY}" ]) || ([ "${SUFFIX}" == "monthly" ] && [ "${DATESTAMPMONTH}" -eq "${DATECHECKMONTH}" ]) || ([ "${SUFFIX}" == "yearly" ] && [ "${DATESTAMPYEAR}" -eq "${DATECHECKYEAR}" ]); then
+          break
+        fi
+      fi
+
+      FOUND=""
+      if [ -f /tmp/inrange_$$.tmp ]; then
+        FOUND=`grep "LABEL,"$LABEL /tmp/inrange_$$.tmp`
+
+        # In case there are unexpected multiple entries (i.e. more than one
+        # label is found with Oct-2016), use only the last most-recent one
+        FOUND=`echo "${FOUND}" | tail -1 | head -1`
+      fi
+
+      if [ ${CURRDATE} -gt ${AXISSTARTDATE} ]; then
+        if [ "$FOUND" != "" ]; then
+          DBDATE=$(echo ${FOUND} | cut -f3 -s -d, )
+          PEAKUSAGE_IN=$(echo ${FOUND} | cut -f4 -s -d, )
+          PEAKUSAGE_OUT=$(echo ${FOUND} | cut -f5 -s -d, )
+          OFFPEAKUSAGE_IN=$(echo ${FOUND} | cut -f6 -s -d, )
+          OFFPEAKUSAGE_OUT=$(echo ${FOUND} | cut -f7 -s -d, )
+          DOWNTOTAL=$((PEAKUSAGE_IN + OFFPEAKUSAGE_IN))000
+          UPTOTAL=$((PEAKUSAGE_OUT + OFFPEAKUSAGE_OUT))000
+          GRANDTOTAL=$((PEAKUSAGE_IN+OFFPEAKUSAGE_IN+PEAKUSAGE_OUT+OFFPEAKUSAGE_OUT))000
+
+          GRANDTOTALKB=$((PEAKUSAGE_IN+OFFPEAKUSAGE_IN+PEAKUSAGE_OUT+OFFPEAKUSAGE_OUT))
+          if [ "${GRANDTOTALKB}" -gt "${YAXISMAX}" ]; then
+            YAXISMAX=${GRANDTOTALKB}
+          fi
+
+          if [ "${SUFFIX}" == "daily" ]; then
+            LABEL=`date +\%Y-\%b-\%d -d @${DBDATE}`'<br />('`date +\%A -d @${DBDATE}`')'
+          fi
+
+          echo "<tr><th><b>"$LABEL"</b></th><td>"$GRANDTOTAL"</td><td>"$DOWNTOTAL"</td><td>"$UPTOTAL"</td></tr>" >> ${HTMPATH}
+
+        else
+          if [ "${SUFFIX}" == "daily" ]; then
+            LABEL=`date +\%Y-\%b-\%d -d @${CURRDATE}`'<br />('`date +\%A -d @${CURRDATE}`')'
+          fi
+
+          echo "<tr><th><b>"$LABEL"</b></th><td>0</td><td>0</td><td>0</td></tr>" >> ${HTMPATH}
+        fi
+      fi
+
+      # Increase iterator
+      CURRDATE=$((CURRDATE + MULTFACT))
+    done
+
+    # Get the highest value on yAxis so we can set the maximum, to prevent
+    # dynamic scaling of yAxis when you scroll
+    if [ ${YAXISMAX} -eq 0 ]; then
+      YMAXSTRING=""
+    else
+      YMAXSTRING="max: ${YAXISMAX}"000","
+    fi
+
+    echo "</tbody></table>" >> ${HTMPATH}
+
+    echo "<script> runOnLoad( function(){ chart"${SUFFIX}" = new Highcharts.Chart({
+    data : {
+    table : 'datatable"${SUFFIX}"'
+  },
+  chart : {
+  renderTo : 'graph"${SUFFIX}"',
+  type     : 'column',
+  zoomType : 'xy'
+},
+title : {
+text : \"<b>"${TITLE}"</b>\"
+            },
+            yAxis : {
+            ${YMAXSTRING}
+            title : {
+            text: 'Bandwidth Used'
+          },
+          labels : {
+          formatter: function () {
+          return '<b>'+getSize(this.value)+'</b>';
+        }
+      }
+    },
+    xAxis : {
+    allowDecimals: false, " >> ${HTMPATH}
+
+    # AXISRANGE is maximum number of items on the xAxis before scrolling;
+    # so "min" value for xAxis in the chart should be the desired max number
+    # of items to graph (RANGE) minus the desired axis range (AXISRANGE)
+    MINVALUE=$((RANGE - AXISRANGE))
+    if [ $MINVALUE -lt 0 ]; then
+      MINVALUE=0
+    fi
+    echo "min: "${MINVALUE}"," >> ${HTMPATH}
+    echo "
+    labels: {
+    format: '{value}',
+  }
+},
+scrollbar: {
+enabled: true
+            },
+            tooltip : {
+            useHTML: true,
+            formatter: function () {
+            return '<b>'+this.point.series.name+'</b><br />'+getSize(this.point.y)+'<br />';
+          }
+        },
+      }); });</script>" >> ${HTMPATH}
+  fi
+
+  rm -f /tmp/inrange_$$.tmp
+
+}
+
+updategraphdb() {
+  YEARDB=${1}
+  MONTHDB=${2}
+  DAYDB=${3}
+  IN=${4}
+  OUT=${5}
+  OFFPEAK=${6}
+
+  # Update graph totals for yearly, monthly, daily
+  for DBPATH in "${DAYDB}" "${MONTHDB}" "${YEARDB}"
+  do
+    PEAKUSAGE_IN=0
+    PEAKUSAGE_OUT=0
+    OFFPEAKUSAGE_IN=0
+    OFFPEAKUSAGE_OUT=0
+    LINE=`tail -1 $DBPATH | head -1`
+    if [ ! -z "${LINE}" ]; then
+      STOREDDATE=$(echo ${LINE} | cut -f1 -s -d, )
+
+      DBSTORED=`date +\%d -d @${STOREDDATE}`
+      YMD=`date +\%d -d @${DATE}`
+      [ "${DBPATH}" == "${MONTHDB}" ] && DBSTORED=`date +\%m -d @${STOREDDATE}` && YMD=`date +\%m -d @${DATE}`
+      [ "${DBPATH}" == "${YEARDB}" ] && DBSTORED=`date +\%Y -d @${STOREDDATE}` && YMD=`date +\%Y -d @${DATE}`
+
+      if [ "$STOREDDATE" -gt "$DATE" ] || [ $DBSTORED == "${YMD}" ]; then
+        PEAKUSAGE_IN=$(echo ${LINE} | cut -f2 -s -d, )
+        PEAKUSAGE_OUT=$(echo ${LINE} | cut -f3 -s -d, )
+        OFFPEAKUSAGE_IN=$(echo ${LINE} | cut -f4 -s -d, )
+        OFFPEAKUSAGE_OUT=$(echo ${LINE} | cut -f5 -s -d, )
+
+        head -n -1 $DBPATH > /tmp/db_$$.tmp
+      else
+        cat $DBPATH > /tmp/db_$$.tmp
+      fi
+    fi
+    if [ "${OFFPEAK}" = "offpeak" ]; then
+      OFFPEAKUSAGE_IN=$((${OFFPEAKUSAGE_IN}+${IN}))
+      OFFPEAKUSAGE_OUT=$((${OFFPEAKUSAGE_OUT}+${OUT}))
+    else
+      PEAKUSAGE_IN=$((${PEAKUSAGE_IN}+${IN}))
+      PEAKUSAGE_OUT=$((${PEAKUSAGE_OUT}+${OUT}))
+    fi
+
+    if [ ${DATE} -gt 1000000 ];  then
+      echo ${DATE},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT} >> /tmp/db_$$.tmp
+      mv /tmp/db_$$.tmp $DBPATH
+    else
+      rm /tmp/db_$$.tmp
+    fi
+  done
+}
+
+# ONLY gets called if this MAC address has any traffic
+checkreset()
+{
+  MAC=${1}
+  REPORTSDBDIR=${2}
+  KEEPMAC=${3}
+
+  MACDASHED=${MAC//:/-}
+  for SUFFIX in daily monthly yearly
+  do
+    YMDDB=${REPORTSDBDIR}/${MACDASHED}_${SUFFIX}.db
+    if [ -f "$YMDDB" ]; then
+      YMDDBLASTLINE=`tail -1 ${YMDDB} | head -1`
+      YMDDBDATE=$(echo ${YMDDBLASTLINE} | cut -f1 -s -d, )
+
+      YMDDBDATEDMY=`date +\%d -d @${YMDDBDATE}`
+      [ "${SUFFIX}" == "monthly" ] && YMDDBDATEDMY=`date +\%m -d @${YMDDBDATE}`
+      [ "${SUFFIX}" == "yearly" ] && YMDDBDATEDMY=`date +\%Y -d @${YMDDBDATE}`
+
+      if ([ "${SUFFIX}" == "daily" ] && [ ! "${DATESTAMPDAY}" -eq "${YMDDBDATEDMY}" ]) || ([ "${SUFFIX}" == "monthly" ] && [ ! "${DATESTAMPMONTH}" -eq "${YMDDBDATEDMY}" ]) || ([ "${SUFFIX}" == "yearly" ] && [ ! "${DATESTAMPYEAR}" -eq "${YMDDBDATEDMY}" ]); then
+        echo ${DATE},0,0,0,0 >> ${YMDDB}
+      fi
+    else
+      touch $YMDDB
+      echo ${DATE},0,0,0,0 >> ${YMDDB}
+    fi
+  done
+}
+
+publishdetailhtm()
+{
+  CSSPATH=${1}
+  JSPATH=${2}
+  DETAILHTM=${3}
+  DAILYHTM=${4}
+  MONTHLYHTM=${5}
+  YEARLYHTM=${6}
+  TITLE=${7}
+
+  echo "<html><head><meta name="format-detection" content="telephone=no"><meta http-equiv=\"Pragma\" content=\"no-cache\"><meta http-equiv=\"Expires\" content=\"-1\"><meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" /><title>"${TITLE}" Detail</title><link rel=\"stylesheet\" href=\""$CSSPATH"/usage.css\" /><link rel=\"stylesheet\" href=\""$CSSPATH"/tabcontent/tabcontent.css\" /><script src=\""$JSPATH"/tabcontent.js\" type=\"text/javascript\"></script><script src=\""$JSPATH"/usage.js\" type=\"text/javascript\"></script><script src=\""$JSPATH"/runOnLoad.js\" type=\"text/javascript\"></script><script src=\""$JSPATH"/HighchartsAdapter.js\"></script><script src=\""$JSPATH"/highstock.js\"></script><script src=\""$JSPATH"/data.js\"></script><script src=\""$JSPATH"/exporting.js\"></script></head><body><h1>"${TITLE}"<br /><span class=\"text-small\">"${PAGETITLE}"</span></h1>" > ${DETAILHTM}
+  echo "<p><button onclick=\"window.history.back(); window.close();\">Close Window</button></p>" >> ${DETAILHTM}
+  echo "<ul class=\"tabs\" data-persist=\"false\">" >> ${DETAILHTM}
+  echo "  <li><a href=\"\#daily\">Daily</a></li>" >> ${DETAILHTM}
+  echo "  <li><a href=\"\#monthly\">Monthly</a></li>" >> ${DETAILHTM}
+  echo "  <li><a href=\"\#yearly\">Yearly</a></li>" >> ${DETAILHTM}
+  echo "</ul>" >> ${DETAILHTM}
+  echo "<div class=\"tabcontents\">" >> ${DETAILHTM}
+  echo "<div id=\"daily\">" >> ${DETAILHTM}
+  cat ${DAILYHTM} >> ${DETAILHTM}
+  echo "</div>" >> ${DETAILHTM}
+  echo "<div id=\"monthly\">" >> ${DETAILHTM}
+  cat ${MONTHLYHTM} >> ${DETAILHTM}
+  echo "</div>" >> ${DETAILHTM}
+  echo "<div id=\"yearly\">" >> ${DETAILHTM}
+  cat ${YEARLYHTM} >> ${DETAILHTM}
+  echo "</div>" >> ${DETAILHTM}
+  echo "</div></body></html>" >> ${DETAILHTM}
+}
+
+# This will also shutdown or restore connections based on quota
+publishWatchList()
+{
+  TOTALSDB=${1}
+  WATCHLISTHTM=${2}
+  WATCHLISTARRAY=${3}
+  MBQUOTAPER=${4}
+  WATCHLISTTITLE=${5}
+
+  if [ "$MBQUOTAPER" != "" ]; then
+
+    echo 'var watchList = {' >> ${WATCHLISTHTM}
+
+    for name in $WATCHLISTARRAY ; do
+      echo '"'$name'": 0, ' >> ${WATCHLISTHTM}
+
+      # If the name is prefixed with specified string, don't shut off their
+      # connection -- but DO restore their connection
+      SKIPSTR="SKIP_" # the prefix
+      SKIPNAME=0      # a flag
+      if [ ! "${name/$SKIPSTR}" = "$name" ] ; then
+        SKIPNAME=1
+        name=$(echo $name | cut -f2 -s -d'_')
+      fi
+
+      > /tmp/uadt_macs.tmp # empty the file first!
+
+      # A trick to get a single variable's value out of the while-loop; note
+      # "tail -n 1" pipe and "echo $USERALLDEVICESTOTAL" inside loop
+      USERALLDEVICESTOTAL=0
+
+      if grep -q $name ${TOTALSDB}; then
+      USERALLDEVICESTOTAL=`
+      grep -i $name ${TOTALSDB} | while IFS=, read USER USAGE MAC
+      do
+        USERALLDEVICESTOTAL=$((USERALLDEVICESTOTAL + USAGE))
+        echo ${MAC} >> /tmp/uadt_macs.tmp
+        echo $USERALLDEVICESTOTAL
+      done | tail -n 1
+      `
+      fi
+
+      if [ $USERALLDEVICESTOTAL -ne 0 ]; then
+  
+        if [ "${USERALLDEVICESTOTAL}" -gt "${MBQUOTAPER}"000 ]; then
+          echo "QUOTA : "${WATCHLISTTITLE}" : "${name}" has reached quota limit!"
+          if [ $SKIPNAME -eq 0 ] ; then
+            cat /tmp/uadt_macs.tmp | while IFS= read MAC
+            do
+              echo "  "${MAC}" cut off"
+              iptables -I FORWARD -m mac --mac-source ${MAC} -j DROP
+            done
+          else
+            echo "  config file says skip, so resume connection!"
+            cat /tmp/uadt_macs.tmp | while IFS= read MAC
+            do
+              iptables -I FORWARD -m mac --mac-source ${MAC} -j ACCEPT
+            done
+          fi
+        else
+          # not over quota, so resume connection
+          echo "QUOTA : "${WATCHLISTTITLE}" : "${name}" is below quota"
+          echo "  not over quota, resume connection"
+          cat /tmp/uadt_macs.tmp | while IFS= read MAC
+          do
+            iptables -I FORWARD -m mac --mac-source ${MAC} -j ACCEPT
+          done
+        fi
+      fi
+    done
+  
+    rm -f /tmp/uadt_macs.tmp
+  
+    echo '};
+    for (var i = 0; i < values.length; i++) {
+      var val = values[i];
+      if (val[0] != null) {
+        for (var key in watchList) {
+          var currentKey = key.toLowerCase();
+          var skipstr = "'${SKIPSTR}'";
+          skipstr = skipstr.toLowerCase();
+          if (currentKey.indexOf(skipstr) != -1) {
+            currentKey = currentKey.replace(skipstr, "");
+          }
+          if (val[0].toLowerCase().indexOf(currentKey) != -1) {
+            watchList[key] += val[6];
+          }
+        }
+      }
+    }' >> ${WATCHLISTHTM}
+  
+    echo 'var watchListOverA = new Array();
+    var watchListOverB = new Array();
+    var watchListOverC = new Array();' >> ${WATCHLISTHTM}
+    echo "for (var key in watchList) {
+    if (watchList[key] > "${MBQUOTAPER}"000000) {
+      var skipstr = \""${SKIPSTR}"\";
+      var keyLabel = key;
+      if (key.indexOf(skipstr) != -1) {
+        keyLabel = key.replace(skipstr, \"\");
+      }
+    else {
+      keyLabel = key + \" <b class='red'>[OFF]</b>\";
+    }
+    watchListOverA.push(keyLabel + ' ('+getSize(watchList[key])+')');
+  }
+      else if (watchList[key] > "$((MBQUOTAPER - WATCHLISTSTEP))"000000 && "${MBQUOTAPER}" > 1000) {
+        watchListOverB.push(key + ' ('+getSize(watchList[key])+')');
+      }
+    else if (watchList[key] > "$((MBQUOTAPER - (WATCHLISTSTEP * 2)))"000000 && "${MBQUOTAPER}" > 2000) {
+      watchListOverC.push(key + ' ('+getSize(watchList[key])+')');
+    }
+  }" >> ${WATCHLISTHTM}
+    echo "if (watchListOverA.length || watchListOverB.length || watchListOverC.length) {" >> ${WATCHLISTHTM}
+    echo "document.write('<h4>"${WATCHLISTTITLE}" <span class=\"purple\">(Quota: '+getSize("${MBQUOTAPER}"000000)+')</span></h4>');" >> ${WATCHLISTHTM}
+    echo "document.write('<table id=\"overtable\"><tr>');" >> ${WATCHLISTHTM}
+    echo "if (watchListOverA.length) " >> ${WATCHLISTHTM}
+    echo "document.write('<td width=\"20%\" class=\"rowlabel\">Over '+getSize("${MBQUOTAPER}"000000)+'</td><td>'+watchListOverA.join(\", \")+'</td></tr>');" >> ${WATCHLISTHTM}
+    echo "if (watchListOverB.length) " >> ${WATCHLISTHTM}
+    echo "document.write('<td width=\"20%\" class=\"rowlabel\">Over '+getSize("$((MBQUOTAPER - WATCHLISTSTEP))"000000)+'</td><td>'+watchListOverB.join(\", \")+'</td></tr>');" >> ${WATCHLISTHTM}
+    echo "if (watchListOverC.length) " >> ${WATCHLISTHTM}
+    echo "document.write('<td width=\"20%\" class=\"rowlabel\">Over '+getSize("$((MBQUOTAPER - (WATCHLISTSTEP * 2)))"000000)+'</td><td>'+watchListOverC.join(\", \")+'</td></tr>');" >> ${WATCHLISTHTM}
+    echo "document.write('</table>');" >> ${WATCHLISTHTM}
+    echo "}" >> ${WATCHLISTHTM}
+  fi
+}
+
+case ${1} in
+
+"setup" )
+
+    #Create the RRDIPT CHAIN (it doesn't matter if it already exists).
+    iptables -N RRDIPT 2> /dev/null
+
+    #Add the RRDIPT CHAIN to the FORWARD chain (if non existing).
+    iptables -L FORWARD --line-numbers -n | grep "RRDIPT" | grep "1" > /dev/null
+    if [ $? -ne 0 ]; then
+        iptables -L FORWARD -n | grep "RRDIPT" > /dev/null
+        if [ $? -eq 0 ]; then
+            echo "DEBUG : iptables chain misplaced, recreating it..."
+            iptables -D FORWARD -j RRDIPT
+        fi
+        iptables -I FORWARD -j RRDIPT
+    fi
+
+    #For each host in the ARP table
+    grep ${LAN_IFACE} /proc/net/arp | while read IP TYPE FLAGS MAC MASK IFACE
+    do
+        #Add iptable rules (if non existing).
+        iptables -nL RRDIPT | grep "${IP} " > /dev/null
+        if [ $? -ne 0 ]; then
+            iptables -I RRDIPT -d ${IP} -j RETURN
+            iptables -I RRDIPT -s ${IP} -j RETURN
+        fi
+    done    
+    ;;
+    
+"update" )
+
+    [ -z "${2}" ] && echo "ERROR : Missing argument 2" && exit 1
+    [ -f "${2}" ] || echo "COUNTERSTART",0,0,0,0,${DATE} >> ${2}
+
+    # path to directory to write the daily/monthly/yearly database data
+    [ -z "${3}" ] && echo "ERROR : Missing argument 3" && exit 1
+    REPORTSDBDIR=${3}
+    [ -d ${REPORTSDBDIR} ] || mkdir -p ${REPORTSDBDIR}
+
+    OFFPEAK="peak"
+    [ -z "${4}" ] || OFFPEAK=${4}
+
+    KEEPMAC="forget"
+    [ -z "${5}" ] || KEEPMAC=${5}
+
+    lock
+
+    #Read and reset counters
+    iptables -L RRDIPT -vnxZ -t filter > /tmp/traffic_$$.tmp
+
+    grep -v "0x0" /proc/net/arp  | while read IP TYPE FLAGS MAC MASK IFACE
+    do
+        #Add new data to the graph. Count in Kbs to deal with 16 bits signed values (up to 2G only)
+        #Have to use temporary files because of crappy busybox shell
+
+        # Get around this problem with Solution 3: http://www.linuxprogrammingblog.com/pipe-in-bash-can-be-a-trap
+        IN=0
+        IN=`
+        grep ${IP} /tmp/traffic_$$.tmp | while read PKTS BYTES TARGET PROT OPT IFIN IFOUT SRC DST
+        do
+            [ "${DST}" = "${IP}" ] && IN=$((${BYTES}/1000))
+            echo $IN
+        done | tail -n 1
+        `
+
+        OUT=0
+        OUT=`
+        grep ${IP} /tmp/traffic_$$.tmp | while read PKTS BYTES TARGET PROT OPT IFIN IFOUT SRC DST
+        do
+            [ "${SRC}" = "${IP}" ] && OUT=$((${BYTES}/1000))
+            echo $OUT
+        done | tail -n 1
+        `
+
+        if ([ ! ${IN} == "0" ] || [ ! ${OUT} == "0" ]);  then
+            echo "DEBUG : New traffic for ${MAC} since last update : ${IN}k:${OUT}k"
+        
+            LINE=$(grep ${MAC} ${2})
+            if [ -z "${LINE}" ]; then
+                echo "DEBUG : ${MAC} is a new host !"
+                PEAKUSAGE_IN=0
+                PEAKUSAGE_OUT=0
+                OFFPEAKUSAGE_IN=0
+                OFFPEAKUSAGE_OUT=0
+            else
+                PEAKUSAGE_IN=$(echo ${LINE} | cut -f2 -s -d, )
+                PEAKUSAGE_OUT=$(echo ${LINE} | cut -f3 -s -d, )
+                OFFPEAKUSAGE_IN=$(echo ${LINE} | cut -f4 -s -d, )
+                OFFPEAKUSAGE_OUT=$(echo ${LINE} | cut -f5 -s -d, )
+            fi
+
+            if [ "${OFFPEAK}" = "offpeak" ]; then
+                OFFPEAKUSAGE_IN=$((${OFFPEAKUSAGE_IN}+${IN}))
+                OFFPEAKUSAGE_OUT=$((${OFFPEAKUSAGE_OUT}+${OUT}))
+            else
+                PEAKUSAGE_IN=$((${PEAKUSAGE_IN}+${IN}))
+                PEAKUSAGE_OUT=$((${PEAKUSAGE_OUT}+${OUT}))
+            fi
+
+            grep -v "${MAC}" ${2} > /tmp/db_$$.tmp
+            mv /tmp/db_$$.tmp ${2}
+
+            echo ${MAC},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT},${DATE} >> ${2}
+
+            ########################################
+            ### Update daily/yearly/monthly data ###
+            ########################################
+
+            checkreset "${MAC}" "${REPORTSDBDIR}" "${KEEPMAC}"
+
+            # Get rid of colons; replace with dashes so we can use in filename
+            MACDASHED=${MAC//:/-}
+
+            # Create files to store data if they don't exist yet
+            YEARDB=${REPORTSDBDIR}/${MACDASHED}_yearly.db
+            [ -f "$YEARDB" ] || touch $YEARDB
+            MONTHDB=${REPORTSDBDIR}/${MACDASHED}_monthly.db
+            [ -f "$MONTHDB" ] || touch $MONTHDB
+            DAYDB=${REPORTSDBDIR}/${MACDASHED}_daily.db
+            [ -f "$DAYDB" ] || touch $DAYDB
+            updategraphdb "${YEARDB}" "${MONTHDB}" "${DAYDB}" "${IN}" "${OUT}" "${OFFPEAK}"
+
+            # Grand totals update
+            YEARDB=${REPORTSDBDIR}/yearly.db
+            [ -f "$YEARDB" ] || touch $YEARDB
+            MONTHDB=${REPORTSDBDIR}/monthly.db
+            [ -f "$MONTHDB" ] || touch $MONTHDB
+            DAYDB=${REPORTSDBDIR}/daily.db
+            [ -f "$DAYDB" ] || touch $DAYDB
+            updategraphdb "${YEARDB}" "${MONTHDB}" "${DAYDB}" "${IN}" "${OUT}" "${OFFPEAK}"
+        fi
+    done
+    
+    #Free some memory
+    rm -f /tmp/*_$$.tmp
+    unlock
+    ;;
+    
+"reset" | "backup" )
+
+    ##################################
+    ### START OF ARGUMENTS SECTION ###
+    ##################################
+
+    # database file
+    [ -z "${2}" ] && echo "ERROR : Missing argument 2" && exit 1
+    [ ! -f "${2}" ] && echo "ERROR : Database file ${2} does not exist" && exit 1
+
+    # directory of yearly/monthly/daily database files
+    [ -z "${3}" ] && echo "ERROR : Missing argument 3" && exit 1
+    REPORTSDBDIR=${3}
+
+    # path to backup to
+    [ -z "${4}" ] && echo "ERROR : Missing argument 4" && exit 1
+    [ -d "${4}" ] || mkdir -p ${4}
+    BACKUPDIR=${4}
+
+    # users file
+    [ -z "${5}" ] && echo "ERROR : Missing argument 5" && exit 1
+    USERSFILE=${5}
+
+    # keep or forget MAC addresses in usage.db (dosen't affect userfile)
+    [ -z "${6}" ] && echo "ERROR : Missing argument 6" && exit 1
+    KEEPMAC=${6}
+
+    # optional 7th parameter specifies a directory to purge
+
+    ################################
+    ### END OF ARGUMENTS SECTION ###
+    ################################
+    
+    lock
+
+    # make backups
+    DEST=${BACKUPDIR}/$DATESTAMPYEAR
+    [ -d ${DEST} ] || mkdir $DEST
+    DEST=${DEST}/$DATESTAMPMONTH
+    [ -d ${DEST} ] || mkdir $DEST
+    DEST=${DEST}/$DATESTAMPDAY
+    [ -d ${DEST} ] || mkdir $DEST
+    DEST=${DEST}/$DATESTAMPTIME
+    [ -d ${DEST} ] || mkdir $DEST
+
+    cp ${2} ${DEST}
+    [ -f "${USERSFILE}" ] && cp ${USERSFILE} ${DEST}
+    [ -d "${REPORTSDBDIR}" ] && cp -r ${REPORTSDBDIR} ${DEST}
+
+    [ "${1}" == "backup" ] && echo "DEBUG : backup complete " && exit 1
+
+    # now handle extra steps for non-backup options
+    echo "COUNTERSTART",0,0,0,0,${DATE} > /tmp/db_$$.tmp
+
+    if [ ! "${KEEPMAC}" == "forget" ]; then
+      cat ${2} | while IFS=, read MAC PEAKUSAGE_IN PEAKUSAGE_OUT OFFPEAKUSAGE_IN OFFPEAKUSAGE_OUT LASTUPDATE
+      do
+        if [ ! ${MAC} == "COUNTERSTART" ]; then
+          echo ${MAC},0,0,0,0,${DATE} >> /tmp/db_$$.tmp
+        fi
+      done
+    fi
+
+    # this zeroes out the counters of usage.db
+    mv /tmp/db_$$.tmp ${2}
+
+    # also reset anybody's connection that was cut off
+    iptables -F
+
+    # reset numbers for daily
+    find ${REPORTSDBDIR} -type f -name "*daily.db" | while read DBFILE; do
+      head -n -1 $DBFILE > /tmp/db_$$.tmp
+      echo ${DATE},0,0,0,0 >> /tmp/db_$$.tmp
+      mv /tmp/db_$$.tmp $DBFILE
+    done
+
+    # optionally-specified backup directory to purge
+    [ -z "${7}" ] || rm -rf ${7}/*
+
+    unlock
+    ;;
+
+"publish" )
+
+    ##################################
+    ### START OF ARGUMENTS SECTION ###
+    ##################################
+
+    # database file
+    [ -z "${2}" ] && echo "ERROR : Missing argument 2" && exit 1
+    [ ! -f "${2}" ] && echo "ERROR : Database file ${2} does not exist" && exit 1
+
+    # directory of yearly/monthly/daily database files
+    [ -z "${3}" ] && echo "ERROR : Missing argument 3" && exit 1
+    [ ! -d "${3}" ] && echo "ERROR : Invalid reports database directory ${3}" && exit 1
+    REPORTSDBDIR=${3}
+
+    # .htm directory to publish main total usage page
+    [ -z "${4}" ] && echo "ERROR : Missing argument 4" && exit 1
+    [ -d "${4}" ] || mkdir -p ${4}
+    USAGEHTM=${4}/${PREFIX}usage.htm
+    TMPUSAGEHTM=/tmp/usage_$$.tmp
+
+    [ -z "${5}" ] || USERSFILE=${5}
+    [ -f "${USERSFILE}" ] || USERSFILE="/dev/null"
+
+    ################################
+    ### END OF ARGUMENTS SECTION ###
+    ################################
+
+    # directory to publish yearly/monthly/daily .htm reports
+    REPORTSHTMDIR=${4}/reports
+    [ -d "${REPORTSHTMDIR}" ] || mkdir -p ${REPORTSHTMDIR}
+
+    DNSMASQFILE="/etc/dnsmasq.conf"
+    [ -f "${DNSMASQFILE}" ] || DNSMASQFILE="/tmp/dnsmasq.leases"
+    [ -f "${DNSMASQFILE}" ] || DNSMASQFILE="/dev/null"
+
+    # first do some number crunching - rewrite the database so that it is sorted
+    lock
+    touch /tmp/sorted_$$.tmp
+    GRANDTOTAL=0
+    GRANDDOWN=0
+    GRANDUP=0
+    GRANDPEAKIN=0
+    GRANDPEAKOUT=0
+    GRANDOFFPEAKIN=0
+    GRANDOFFPEAKOUT=0
+    cat ${2} | while IFS=, read MAC PEAKUSAGE_IN PEAKUSAGE_OUT OFFPEAKUSAGE_IN OFFPEAKUSAGE_OUT LASTUPDATE
+    do
+
+
+      # COUNTERSTART value should only be on the first line of the .db file
+      if [ ${MAC} == "COUNTERSTART" ]; then
+        # We want the COUNTERSTART line sorted to the end of the array,
+        # so give it the smallest size (we sort by USERTOTAL in 'publish').
+        USERTOTAL=-1
+
+        DOWNTOTAL=0
+        UPTOTAL=0
+        PEAKUSAGE_IN=0
+        PEAKUSAGE_OUT=0
+        OFFPEAKUSAGE_IN=0
+        OFFPEAKUSAGE_OUT=0
+
+        echo ${USERTOTAL},${DOWNTOTAL},${UPTOTAL},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT},${MAC},$(date "+%a %b-%d %H:%M %Z %Y" -d @$LASTUPDATE).${LASTUPDATE},${GRANDDOWN},${GRANDUP},${GRANDTOTAL},${GRANDPEAKIN},${GRANDPEAKOUT},${GRANDOFFPEAKIN},${GRANDOFFPEAKOUT} >> /tmp/sorted_$$.tmp
+      else
+        DOWNTOTAL=$((PEAKUSAGE_IN + OFFPEAKUSAGE_IN))
+        UPTOTAL=$((PEAKUSAGE_OUT + OFFPEAKUSAGE_OUT))
+        USERTOTAL=$((DOWNTOTAL + UPTOTAL))
+
+        GRANDDOWN=$((GRANDDOWN + DOWNTOTAL))
+        GRANDUP=$((GRANDUP + UPTOTAL))
+        GRANDTOTAL=$((GRANDTOTAL + USERTOTAL))
+        GRANDPEAKIN=$((GRANDPEAKIN + PEAKUSAGE_IN))
+        GRANDPEAKOUT=$((GRANDPEAKOUT + PEAKUSAGE_OUT))
+        GRANDOFFPEAKIN=$((GRANDOFFPEAKIN + OFFPEAKUSAGE_IN))
+        GRANDOFFPEAKOUT=$((GRANDOFFPEAKOUT + OFFPEAKUSAGE_OUT))
+
+        echo ${USERTOTAL},${DOWNTOTAL},${UPTOTAL},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT},${MAC},$(date "+%b-%d %H:%M" -d @$LASTUPDATE).${LASTUPDATE},${GRANDDOWN},${GRANDUP},${GRANDTOTAL},${GRANDPEAKIN},${GRANDPEAKOUT},${GRANDOFFPEAKIN},${GRANDOFFPEAKOUT} >> /tmp/sorted_$$.tmp
+      fi
+
+    done
+    unlock
+
+        # create HTML page
+        echo "<html><head><meta http-equiv=\"Pragma\" content=\"no-cache\"><meta http-equiv=\"Expires\" content=\"-1\"><meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" /><title>Traffic</title><link rel=\"stylesheet\" href=\"css/usage.css\" /><script src=\"js/usage.js\" type=\"text/javascript\"></script><script src=\"js/sorttable.js\" type=\"text/javascript\"></script><script src=\"js/tablefilter.js\" type=\"text/javascript\"></script><script type=\"text/javascript\">var routerNameArray = [ \""${ROUTERNAME}"\" ]; document.onkeypress = function(evt) { /* Firefoxes uses onkeypress, Chrome uses onkeydown */ if(/firefox/.test(navigator.userAgent.toLowerCase())){ resetFilterKeypress(evt, routerNameArray); } }; document.onkeydown = function(evt) { /* Firefoxes uses onkeypress, Chrome uses onkeydown */ if(/chrom(e|ium)/.test(navigator.userAgent.toLowerCase())){ resetFilterKeypress(evt, routerNameArray); } };</script></head><body>" >> $TMPUSAGEHTM
+        echo "<h1>"${PAGETITLE}"</h1>" >> $TMPUSAGEHTM
+        echo "<script type=\"text/javascript\">" >> $TMPUSAGEHTM
+
+        TOTALSDB=/tmp/totalsdb.tmp
+        > $TOTALSDB
+
+        echo "var values = new Array(" >> $TMPUSAGEHTM
+        sort -n -r /tmp/sorted_$$.tmp | while IFS=, read USERTOTAL DOWNTOTAL UPTOTAL PEAKUSAGE_IN PEAKUSAGE_OUT OFFPEAKUSAGE_IN OFFPEAKUSAGE_OUT MAC LASTUPDATE GRANDNUMS
+        do
+                echo "new Array(" >> $TMPUSAGEHTM
+                USER=$(grep "${MAC}" "${USERSFILE}" | cut -f2 -s -d, )
+                DNSMASQUSER=$(grep "${MAC}" "${DNSMASQFILE}" | cut -f4 -s -d ' ')
+
+                [ -z "$USER" ] && USER="$DNSMASQUSER"
+                if [ -z "$USER" ] || [ "$USER" == "*" ]; then
+                  USER="UNKNOWN"
+                fi
+
+                ORIGUSER=$USER
+
+                if [ "$DNSMASQUSER" == "$USER" ]; then
+                  USER=${USER}_warning
+                fi
+
+                # If username contains string "UNKNOWN", add some CSS styling
+                UNKSTR="UNKNOWN"
+                if [ ! "${USER/$UNKSTR}" = "$USER" ] ; then
+                  USER=${USER}_alert
+                fi
+
+                echo ${USER},${USERTOTAL},${MAC} >> $TOTALSDB
+
+                echo "\"${USER}\",\"${MAC}\",${PEAKUSAGE_IN}000,${PEAKUSAGE_OUT}000,${OFFPEAKUSAGE_IN}000,${OFFPEAKUSAGE_OUT}000,${USERTOTAL}000,${DOWNTOTAL}000,${UPTOTAL}000,\"${LASTUPDATE}\"" >> $TMPUSAGEHTM
+
+                ##################################################
+                ### Publish to yearly/monthly/daily HTML pages ###
+                ##################################################
+
+                if [ ! ${MAC} == "COUNTERSTART" ] && [ ! ${MAC} == "00:00:00:00:00:00" ]; then
+                  # Get rid of colons; replace with dashes
+                  MACDASHED=${MAC//:/-}
+                  [ -d ${REPORTSHTMDIR}/${MACDASHED} ] || mkdir -p ${REPORTSHTMDIR}/${MACDASHED}
+
+                  USER=${USER//\'/\\\'}
+
+                  for SUFFIX in yearly monthly daily
+                  do
+                    TITLE=${ORIGUSER}" ("${MAC}")"
+                    HTMPATH=${REPORTSHTMDIR}/${MACDASHED}/${SUFFIX}_detail.htm
+                    [ -f "$HTMPATH" ] || echo "No "${SUFFIX}" data published yet." > $HTMPATH
+
+                    SUFFIXCAP="Yearly"
+                    AXISRANGE=10
+                    if [ "${SUFFIX}" == "monthly" ]; then
+                      SUFFIXCAP="Monthly"
+                      AXISRANGE=12
+                    fi
+                    if [ "${SUFFIX}" == "daily" ]; then
+                      SUFFIXCAP="Daily"
+                      AXISRANGE=7
+                    fi
+
+                    DBPATH=${REPORTSDBDIR}/${MACDASHED}_${SUFFIX}.db
+
+                    publishgraphhtm "${DBPATH}" "${SUFFIX}" "${HTMPATH}" "${SUFFIXCAP} Usage for ${TITLE}" "${AXISRANGE}" "${MAC}"
+                  done
+
+                  DETAILHTM=${REPORTSHTMDIR}/${MACDASHED}/detail.htm
+                  [ -f "$DETAILHTM" ] || touch $DETAILHTM
+                  YEARLYHTM=${REPORTSHTMDIR}/${MACDASHED}/yearly_detail.htm
+                  MONTHLYHTM=${REPORTSHTMDIR}/${MACDASHED}/monthly_detail.htm
+                  DAILYHTM=${REPORTSHTMDIR}/${MACDASHED}/daily_detail.htm
+                  TITLE=${ORIGUSER}" ("${MAC}")"
+
+
+                  CSSPATH=../../css
+                  JSPATH=../../js
+
+                  publishdetailhtm "${CSSPATH}" "${JSPATH}" "${DETAILHTM}" "${DAILYHTM}" "${MONTHLYHTM}" "${YEARLYHTM}" "${TITLE}"
+
+                  DBPATH=${REPORTSDBDIR}/${MACDASHED}_daily.db
+                  LASTUPDATERAW=$(echo ${LASTUPDATE} | cut -f2 -s -d. )
+                  LASTUPDATEDAY=`date +\%d -d @${LASTUPDATERAW}`
+                  LASTUPDATEMONTH=`date +\%m -d @${LASTUPDATERAW}`
+                  LASTUPDATEYEAR=`date +\%Y -d @${LASTUPDATERAW}`
+                  if [ -f ${DBPATH} ] && [ ${LASTUPDATEDAY} == ${DATESTAMPDAY} ] &&  [ ${LASTUPDATEMONTH} == ${DATESTAMPMONTH} ] && [ ${LASTUPDATEYEAR} == ${DATESTAMPYEAR} ]; then
+                    TODAYNUMS=`tail -1 ${DBPATH}`
+                    TODAYPEAKUSAGE_IN=$(echo ${TODAYNUMS} | cut -f2 -s -d, )
+                    TODAYPEAKUSAGE_OUT=$(echo ${TODAYNUMS} | cut -f3 -s -d, )
+                    TODAYOFFPEAKUSAGE_IN=$(echo ${TODAYNUMS} | cut -f4 -s -d, )
+                    TODAYOFFPEAKUSAGE_OUT=$(echo ${TODAYNUMS} | cut -f5 -s -d, )
+                    TODAYDOWN=$((TODAYPEAKUSAGE_IN + TODAYOFFPEAKUSAGE_IN))
+                    TODAYUP=$((TODAYPEAKUSAGE_OUT + TODAYOFFPEAKUSAGE_OUT))
+                    TODAYTOTAL=$((TODAYDOWN + TODAYUP))
+                
+                    echo ","${TODAYTOTAL}000,${TODAYDOWN}000,${TODAYUP}000 >> $TMPUSAGEHTM
+                  else
+                    echo ",0,0,0" >> $TMPUSAGEHTM
+                  fi
+                fi
+
+                echo ")," >> $TMPUSAGEHTM
+
+        done
+        echo "0);" >> $TMPUSAGEHTM
+
+        # Publish individual watch lists
+        publishWatchList "${TOTALSDB}" "${TMPUSAGEHTM}" "${STUDENTWATCHLISTARRAY}" "${MBQUOTAPERSTUDENT}" "${STUDENTWATCHLISTTITLE}"
+        publishWatchList "${TOTALSDB}" "${TMPUSAGEHTM}" "${GUESTWATCHLISTARRAY}" "${MBQUOTAPERGUEST}" "${GUESTWATCHLISTTITLE}"
+
+        rm -f /tmp/totalsdb.tmp
+
+        # Grand Total Today numbers handled separately
+        DBPATH=${REPORTSDBDIR}/daily.db
+        if [ -f ${DBPATH} ]; then
+          TODAYNUMS=`tail -1 ${DBPATH}`
+          LASTUPDATERAW=$(echo ${TODAYNUMS} | cut -f1 -s -d, )
+          LASTUPDATEDAY=`date +\%d -d @${LASTUPDATERAW}`
+          LASTUPDATEMONTH=`date +\%m -d @${LASTUPDATERAW}`
+          LASTUPDATEYEAR=`date +\%Y -d @${LASTUPDATERAW}`
+          if [ ${LASTUPDATEDAY} == ${DATESTAMPDAY} ] &&  [ ${LASTUPDATEMONTH} == ${DATESTAMPMONTH} ] && [ ${LASTUPDATEYEAR} == ${DATESTAMPYEAR} ]; then
+            TODAYPEAKUSAGE_IN=$(echo ${TODAYNUMS} | cut -f2 -s -d, )
+            TODAYPEAKUSAGE_OUT=$(echo ${TODAYNUMS} | cut -f3 -s -d, )
+            TODAYOFFPEAKUSAGE_IN=$(echo ${TODAYNUMS} | cut -f4 -s -d, )
+            TODAYOFFPEAKUSAGE_OUT=$(echo ${TODAYNUMS} | cut -f5 -s -d, )
+            TODAYDOWN=$((TODAYPEAKUSAGE_IN + TODAYOFFPEAKUSAGE_IN))
+            TODAYUP=$((TODAYPEAKUSAGE_OUT + TODAYOFFPEAKUSAGE_OUT))
+            TODAYTOTAL=$((TODAYDOWN + TODAYUP))
+          fi
+        fi
+
+        # Grab last line of .tmp file; has the numbers for Grand Down/Up/Total
+        GRANDNUMSLINE=`tail -1 /tmp/sorted_$$.tmp | head -1`
+        GRANDDOWN=$(echo ${GRANDNUMSLINE} | cut -f10 -s -d, )000
+        GRANDUP=$(echo ${GRANDNUMSLINE} | cut -f11 -s -d, )000
+        GRANDTOTAL=$(echo ${GRANDNUMSLINE} | cut -f12 -s -d, )000
+        GRANDPEAKIN=$(echo ${GRANDNUMSLINE} | cut -f13 -s -d, )
+        GRANDPEAKOUT=$(echo ${GRANDNUMSLINE} | cut -f14 -s -d, )
+        GRANDOFFPEAKIN=$(echo ${GRANDNUMSLINE} | cut -f15 -s -d, )
+        GRANDOFFPEAKOUT=$(echo ${GRANDNUMSLINE} | cut -f16 -s -d, )
+
+        echo "var lastUpdate = [0, "${DATE}"];" >> $TMPUSAGEHTM
+        echo "if (values[values.length-2][1] === \"COUNTERSTART\") {" >> $TMPUSAGEHTM
+        echo "lastUpdate = values[values.length-2][9].split('.');" >> $TMPUSAGEHTM
+        echo "document.write('<h3>Last reset on '+lastUpdate[0]+'. "${HEADING}"</h3>'); }" >> $TMPUSAGEHTM
+
+        echo "var timeElapsed = "${DATE}" - lastUpdate[1];" >> $TMPUSAGEHTM
+        echo "var daysElapsed = timeElapsed / 86400;" >> $TMPUSAGEHTM
+        echo "var divisor = 1;" >> $TMPUSAGEHTM
+
+        if ([ "${MBTOTALQUOTA}" != "" ] && [ "${MBTOTALQUOTA}" != 0 ]); then
+          echo "var mbTotalQuota = getSize("${MBTOTALQUOTA}"000000);" >> $TMPUSAGEHTM
+        else
+          echo "var mbTotalQuota = \"&infin;\";" >> $TMPUSAGEHTM
+        fi
+
+        echo "if (daysElapsed > 0 && daysElapsed > 1) divisor = daysElapsed;" >> $TMPUSAGEHTM
+        echo "document.write('<p>"${DESCRIPTION}"</p>');" >> $TMPUSAGEHTM
+
+        echo "document.write('<table id=\"summarytable\"><tr onclick=\"goToTotalsDetail()\"><th>GRAND TOTAL<br />for <span class=\"warning\">'+parseFloat(daysElapsed).toFixed(1) +' day(s)</span>.</th><th>TOTAL<br />DOWN</th><th>TOTAL<br />UP</th><th>AVERAGE<br />DAILY</th><th>AVERAGE<br /> DAILY<br />DOWN</th><th>AVERAGE<br />DAILY<br />UP</th><th>TODAY<br />TOTAL</th><th>TODAY<br />DOWN</th><th>TODAY<br />UP</th><tr onclick=\"goToTotalsDetail()\"><td class=\"hilite\">'+getSize("${GRANDTOTAL}")+' / '+mbTotalQuota+'</td><td>'+getSize("${GRANDDOWN}")+' &#x25BC;</td><td>'+getSize("${GRANDUP}")+' &#x25B2;</td><td class="hilite">'+getSize("${GRANDTOTAL}"/divisor)+'</td><td>'+getSize("${GRANDDOWN}"/divisor)+' &#x25BC;</td><td>'+getSize("${GRANDUP}"/divisor)+' &#x25B2;</td><td class=\"hilite\">'+getSize("${TODAYTOTAL}000")+'</td><td>'+getSize("${TODAYDOWN}000")+' &#x25BC;</td><td>'+getSize("${TODAYUP}000")+' &#x25B2;</td></tr></table>');" >> $TMPUSAGEHTM
+        echo "document.write('<p><form id=\"search-form\"><b>Filter:</b> <span class=\"text-input-wrapper\"><input id=\"filterquery-"${ROUTERNAME}"\" onkeyup=\'filter(this, \"filterclearbtn-"${ROUTERNAME}"\", \"usertable-"${ROUTERNAME}"\")\' type=\"text\" autofocus><span onclick=\'resetfilter(\"filterclearbtn-"${ROUTERNAME}"\", \"filterquery-"${ROUTERNAME}"\", \"usertable-"${ROUTERNAME}"\")\' id=\"filterclearbtn-"${ROUTERNAME}"\" title=\"Clear\">&times;</span></span><span class=\"text-small\"> &larr; Type your name here to see your individual total.</span></form></p>');" >> $TMPUSAGEHTM
+        echo "document.write('<table id=\"usertable-"${ROUTERNAME}"\" class=\"usertable sortable\"><tr><th>User</th><th>Total<br />used</th><th>Total<br />down</th><th>Total<br />up</th><!-- <th>Peak<br />down</th><th>Peak<br />up</th><th>Offpeak<br />down</th><th>Offpeak<br />up</th> --><th>Average<br />Daily<br />Total</th><th>Average<br />Daily<br />Down</th><th>Average<br />Daily<br />Up</th><th>Today<br />Total</th><th>Today<br />Down</th><th>Today<br />Up</th><th>Last update</th></tr>');" >> $TMPUSAGEHTM
+
+        echo "for (i=0; i < values.length-(values[values.length-2][1] === \"COUNTERSTART\" ? 2 : 1); i++) { if (values[i][1].trim() !== \"00:00:00:00:00:00\") { var lastUpdate = values[i][9].split('.'); document.write('<tr onclick=\"goToDetail(this)\"><td sorttable_customkey=\"'+values[i][0].toLowerCase().trim()+'\"><span class=\"username'); var warnval = values[i][0].indexOf(\"_warning\"); var alertval = values[i][0].indexOf(\"_alert\"); if (warnval > -1) { document.write(' warning'); values[i][0] = values[i][0].substring(0, warnval); } if (alertval > -1) { document.write(' alert'); values[i][0] = values[i][0].substring(0, alertval); } document.write('\">'); " >> $TMPUSAGEHTM
+        echo "document.write(values[i][0]+'</span><br />'+values[i][1]+'</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][6]+'\" class=\"coltotal\">'+getSize(values[i][6])+'</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][7]+'\" class=\"coltotal\">'+getSize(values[i][7])+' &#x25BC;</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][8]+'\" class=\"coltotal\">'+getSize(values[i][8])+' &#x25B2;</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][6]+'\" class=\"colavg\">'+getSize(values[i][6]/divisor)+'</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][7]+'\" class=\"colavg\">'+getSize(values[i][7]/divisor)+' &#x25BC;</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][8]+'\" class=\"colavg\">'+getSize(values[i][8]/divisor)+' &#x25B2;</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][10]+'\" class=\"coltoday\">'+getSize(values[i][10])+'</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][11]+'\" class=\"coltoday\">'+getSize(values[i][11])+' &#x25BC;</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+values[i][12]+'\" class=\"coltoday\">'+getSize(values[i][12])+' &#x25B2;</td>');" >> $TMPUSAGEHTM
+        echo "document.write('<td sorttable_customkey=\"'+lastUpdate[1]+'\">'+lastUpdate[0]+'</td>');" >> $TMPUSAGEHTM
+        echo "} } document.write('</tr></table>');</script>" >> $TMPUSAGEHTM
+        echo "<br /><small>This page was generated on `date -d @${DATE}`</small>" 2>&1 >> $TMPUSAGEHTM
+        echo "</body></html>" >> $TMPUSAGEHTM
+
+        mv ${TMPUSAGEHTM} ${USAGEHTM}
+
+        for SUFFIX in yearly monthly daily
+        do
+          HTMPATH=${REPORTSHTMDIR}/${SUFFIX}_detail.htm
+          touch $HTMPATH
+
+          SUFFIXCAP="Yearly"
+          AXISRANGE=10
+          if [ "${SUFFIX}" == "monthly" ]; then
+            SUFFIXCAP="Monthly"
+            AXISRANGE=12
+          fi
+          if [ "${SUFFIX}" == "daily" ]; then
+            SUFFIXCAP="Daily"
+            AXISRANGE=7
+          fi
+
+          DBPATH=${REPORTSDBDIR}/${SUFFIX}.db
+
+          publishgraphhtm "${DBPATH}" "${SUFFIX}" "${HTMPATH}" "Total ${SUFFIXCAP} Usage" "${AXISRANGE}" "Grand Totals"
+        done
+
+        DETAILHTM=${REPORTSHTMDIR}/detail.htm
+        [ -f "$DETAILHTM" ] || touch $DETAILHTM
+        YEARLYHTM=${REPORTSHTMDIR}/yearly_detail.htm
+        [ -f "$YEARLYHTM" ] || echo "No yearly data published yet." > $YEARLYHTM
+        MONTHLYHTM=${REPORTSHTMDIR}/monthly_detail.htm
+        [ -f "$MONTHLYHTM" ] || echo "No monthly data published yet." > $MONTHLYHTM
+        DAILYHTM=${REPORTSHTMDIR}/daily_detail.htm
+        [ -f "$DAILYHTM" ] || echo "No daily data published yet." > $DAILYHTM
+        TITLE="Grand Totals"
+
+        CSSPATH=../css
+        JSPATH=../js
+
+        publishdetailhtm "${CSSPATH}" "${JSPATH}" "${DETAILHTM}" "${DAILYHTM}" "${MONTHLYHTM}" "${YEARLYHTM}" "${TITLE}"
+ 
+        #Free some memory
+        rm -f /tmp/*_$$.tmp
+        ;;
+
+*)
+    echo "Usage : $0 {setup|update|publish|reset|backup} [options...]"
+    exit
+    ;;
+esac
