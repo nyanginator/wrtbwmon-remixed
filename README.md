@@ -228,4 +228,4 @@ Notes
 Contact
 =======
 Nicholas Yang\
-http://nyanginator.wixsite.com/home
+https://nicky.pairsite.com
