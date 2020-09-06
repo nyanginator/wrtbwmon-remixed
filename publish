@@ -2,4 +2,14 @@
 DIR="$( cd "$( dirname "$0" )" && pwd )"
 . $DIR/config
 
+if [ ! -d /tmp/www/$WWWSUBDIR/js ]; then
+    mkdir -p /tmp/www/$WWWSUBDIR/js
+    cp -r $DIR/js /tmp/www/$WWWSUBDIR
+fi
+
+if [ ! -d /tmp/www/$WWWSUBDIR/css ]; then
+    mkdir -p /tmp/www/$WWWSUBDIR/css
+    cp -r $DIR/css /tmp/www/$WWWSUBDIR
+fi
+
 $DIR/wrtbwmon publish /tmp/usage.db /tmp/reports /tmp/www/$WWWSUBDIR /tmp/users.txt
