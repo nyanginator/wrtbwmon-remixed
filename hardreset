@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Delete all files, except users.txt
+DIR="$( cd "$( dirname "$0" )" && pwd )"
+. $DIR/config
+
+rm -rf /tmp/usage.db /tmp/reports /tmp/www/$WWWSUBDIR/reports /tmp/www/$WWWSUBDIR/usage.htm
+rm -rf $DIR/reports $DIR/usage.db $DIR/monthlybkup $DIR/bkup
