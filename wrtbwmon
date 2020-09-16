@@ -534,8 +534,10 @@ case ${1} in
         IN=`
         grep ${IP} /tmp/traffic_$$.tmp | while read PKTS BYTES TARGET PROT OPT IFIN IFOUT SRC DST
         do
-            [ "${DST}" = "${IP}" ] && IN=$((${BYTES}/1000))
-            echo $IN
+            if ([ "${DST}" = "${IP}" ] && [ "${BYTES}" != 0 ]); then
+                IN=$((${BYTES}/1000))
+                echo $IN
+            fi
         done | tail -n 1
         `
 
@@ -543,8 +545,10 @@ case ${1} in
         OUT=`
         grep ${IP} /tmp/traffic_$$.tmp | while read PKTS BYTES TARGET PROT OPT IFIN IFOUT SRC DST
         do
-            [ "${SRC}" = "${IP}" ] && OUT=$((${BYTES}/1000))
-            echo $OUT
+            if ([ "${SRC}" = "${IP}" ] && [ "${BYTES}" != 0 ]); then
+                OUT=$((${BYTES}/1000))
+                echo $OUT
+            fi
         done | tail -n 1
         `
 
