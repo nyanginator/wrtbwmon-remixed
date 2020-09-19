@@ -530,7 +530,6 @@ case ${1} in
         #Have to use temporary files because of crappy busybox shell
 
         # Get around this problem with Solution 3: http://www.linuxprogrammingblog.com/pipe-in-bash-can-be-a-trap
-        IN=0
         IN=`
         grep ${IP} /tmp/traffic_$$.tmp | while read PKTS BYTES TARGET PROT OPT IFIN IFOUT SRC DST
         do
@@ -541,7 +540,6 @@ case ${1} in
         done | tail -n 1
         `
 
-        OUT=0
         OUT=`
         grep ${IP} /tmp/traffic_$$.tmp | while read PKTS BYTES TARGET PROT OPT IFIN IFOUT SRC DST
         do
@@ -551,6 +549,10 @@ case ${1} in
             fi
         done | tail -n 1
         `
+
+        # Make sure we don't get an arithmetic syntax error
+        [ "${IN}" == "" ] && IN=0                                               
+        [ "${OUT}" == "" ] && OUT=0
 
         if ([ ! ${IN} == "0" ] || [ ! ${OUT} == "0" ]);  then
             echo "DEBUG : New traffic for ${MAC} since last update : ${IN}k:${OUT}k"
