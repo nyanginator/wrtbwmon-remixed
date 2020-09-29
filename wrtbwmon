@@ -478,27 +478,27 @@ case ${1} in
 "setup" )
 
     #Create the RRDIPT CHAIN (it doesn't matter if it already exists).
-    iptables -N RRDIPT 2> /dev/null
+    iptables -N RRDIPT -w 2> /dev/null
 
     #Add the RRDIPT CHAIN to the FORWARD chain (if non existing).
-    iptables -L FORWARD --line-numbers -n | grep "RRDIPT" | grep "1" > /dev/null
+    iptables -L FORWARD --line-numbers -n -w | grep "RRDIPT" | grep "1" > /dev/null
     if [ $? -ne 0 ]; then
-        iptables -L FORWARD -n | grep "RRDIPT" > /dev/null
+        iptables -L FORWARD -n -w | grep "RRDIPT" > /dev/null
         if [ $? -eq 0 ]; then
             echo "DEBUG : iptables chain misplaced, recreating it..."
-            iptables -D FORWARD -j RRDIPT
+            iptables -D FORWARD -j RRDIPT -w
         fi
-        iptables -I FORWARD -j RRDIPT
+        iptables -I FORWARD -j RRDIPT -w
     fi
 
     #For each host in the ARP table
     grep ${LAN_IFACE} /proc/net/arp | while read IP TYPE FLAGS MAC MASK IFACE
     do
         #Add iptable rules (if non existing).
-        iptables -nL RRDIPT | grep "${IP} " > /dev/null
+        iptables -nL RRDIPT -w | grep "${IP} " > /dev/null
         if [ $? -ne 0 ]; then
-            iptables -I RRDIPT -d ${IP} -j RETURN
-            iptables -I RRDIPT -s ${IP} -j RETURN
+            iptables -I RRDIPT -d ${IP} -j RETURN -w
+            iptables -I RRDIPT -s ${IP} -j RETURN -w
         fi
     done    
     ;;
@@ -641,7 +641,7 @@ case ${1} in
     [ -z "${5}" ] && echo "ERROR : Missing argument 5" && exit 1
     USERSFILE=${5}
 
-    # keep or forget MAC addresses in usage.db (dosen't affect userfile)
+    # keep or forget MAC addresses in usage.db (doesn't affect userfile)
     [ -z "${6}" ] && echo "ERROR : Missing argument 6" && exit 1
     KEEPMAC=${6}
 
