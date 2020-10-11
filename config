@@ -7,7 +7,15 @@ HEADING="Resets on 1st of every month." # Or whenever you set cron to reset
 DESCRIPTION=""
 MBTOTALQUOTA=""
 
+# If you want to merge the HTML output from multiple routers onto the same
+# page, you will need a unique name for each router
+ROUTERNAME="router"
+
+# Subdirectory of /tmp/www/ to publish the usage.htm file to
 WWWSUBDIR=""
+
+# In MB, when users on the watch list are within 2 increments of this value,
+# they will appear on the list
 WATCHLISTSTEP="1000"
 
 # You can set a limit per person in every "watch list" defined below. It should

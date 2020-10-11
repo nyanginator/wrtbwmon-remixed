@@ -20,8 +20,6 @@ DATESTAMPYEAR=$(date +\%Y -d @${DATE})
 DATESTAMPMONTH=$(date +\%m -d @${DATE})
 DATESTAMPDAY=$(date +\%d -d @${DATE})
 DATESTAMPTIME=$(date +\%H\.\%M.\%S -d @${DATE})
-PREFIX=""
-
 
 LAN_IFACE=$(nvram get lan_ifname)
 
@@ -76,8 +74,7 @@ publishgraphhtm()
     STARTDATE=$((DATE - RANGE * MULTFACT))
     STARTDATE=$((STARTDATE - OFFSET))
 
-    echo "<div id=\"graph"${SUFFIX}"\" class=\"graphcontainer\"></div>" > ${HTMPATH}
-    echo "<table class=\"hidden\" id=\"datatable"${SUFFIX}"\" cellpadding=\"4\" border=\"1\"><thead><tr><th></th><th>Total</th><th>Down</th><th>Up</th></tr></thead><tbody>" >> ${HTMPATH}
+    echo '<script>var data_'${SUFFIX}' = [' > ${HTMPATH}
 
     YAXISMAX=0
 
@@ -105,6 +102,8 @@ publishgraphhtm()
 
     CURRDATE=${STARTDATE}
     while [ ${CURRDATE} -lt $((DATE + MULTFACT)) ]; do
+      RAWDATE=${CURRDATE}
+
       LABEL=`date +\%Y -d @${CURRDATE}`
       if [ "${SUFFIX}" == "monthly" ]; then
         LABEL=`date +\%b-\%Y -d @${CURRDATE}`
@@ -151,18 +150,9 @@ publishgraphhtm()
             YAXISMAX=${GRANDTOTALKB}
           fi
 
-          if [ "${SUFFIX}" == "daily" ]; then
-            LABEL=`date +\%Y-\%b-\%d -d @${DBDATE}`'<br />('`date +\%A -d @${DBDATE}`')'
-          fi
-
-          echo "<tr><th><b>"$LABEL"</b></th><td>"$GRANDTOTAL"</td><td>"$DOWNTOTAL"</td><td>"$UPTOTAL"</td></tr>" >> ${HTMPATH}
-
+          echo ${RAWDATE}', '${GRANDTOTAL}', '${DOWNTOTAL}', '${UPTOTAL}', ' >> ${HTMPATH}
         else
-          if [ "${SUFFIX}" == "daily" ]; then
-            LABEL=`date +\%Y-\%b-\%d -d @${CURRDATE}`'<br />('`date +\%A -d @${CURRDATE}`')'
-          fi
-
-          echo "<tr><th><b>"$LABEL"</b></th><td>0</td><td>0</td><td>0</td></tr>" >> ${HTMPATH}
+          echo ${RAWDATE}', 0, 0, 0,' >> ${HTMPATH}
         fi
       fi
 
@@ -170,72 +160,165 @@ publishgraphhtm()
       CURRDATE=$((CURRDATE + MULTFACT))
     done
 
-    # Get the highest value on yAxis so we can set the maximum, to prevent
-    # dynamic scaling of yAxis when you scroll
-    if [ ${YAXISMAX} -eq 0 ]; then
-      YMAXSTRING=""
-    else
-      YMAXSTRING="max: ${YAXISMAX}"000","
-    fi
+    echo '];
 
-    echo "</tbody></table>" >> ${HTMPATH}
+    var maxY_'${SUFFIX}' = 0;
+    var labels_'${SUFFIX}' = [];
+    var total_'${SUFFIX}' = [];
+    var up_'${SUFFIX}' = [];
+    var down_'${SUFFIX}' = [];
+    for (var i = 0; i < data_'${SUFFIX}'.length; i += 4) {
+      labels_'${SUFFIX}'.push(data_'${SUFFIX}'[i]);
+      total_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 1]);
+      up_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 2]);
+      down_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 3]);
 
-    echo "<script> runOnLoad( function(){ chart"${SUFFIX}" = new Highcharts.Chart({
-    data : {
-    table : 'datatable"${SUFFIX}"'
-  },
-  chart : {
-  renderTo : 'graph"${SUFFIX}"',
-  type     : 'column',
-  zoomType : 'xy'
-},
-title : {
-text : \"<b>"${TITLE}"</b>\"
+      if (maxY_'${SUFFIX}' < data_'${SUFFIX}'[i + 1])
+        maxY_'${SUFFIX}' = data_'${SUFFIX}'[i + 1];
+    }
+
+    </script>' >> ${HTMPATH}
+
+    # Handle quotes/double-quotes
+    TITLE=${TITLE//\'/\\\'}
+    TITLE=${TITLE//\"/\\\"}
+
+    # Chart.js code begins here
+    echo '
+      <div class="detailsChartWrapper">
+          <canvas id="detailsChart-'${SUFFIX}'"></canvas>
+          <button id="resetZoom-'${SUFFIX}'" class="reset-button" onclick="resetZoom(detailsChart_'${SUFFIX}', this);">Reset Zoom/Position</button>
+      </div>
+    ' >> ${HTMPATH}
+
+    # AXISRANGE is no. of items shown on xAxis before having to pan the view
+    echo "<script>
+      var minX_"${SUFFIX}" = labels_"${SUFFIX}"[labels_"${SUFFIX}".length - 1 - "${AXISRANGE}"];
+
+      var ctx_"${SUFFIX}" = document.getElementById('detailsChart-"${SUFFIX}"');
+      var detailsChart_"${SUFFIX}" = new Chart(ctx_"${SUFFIX}", {
+        type: 'bar',
+        data: {
+          labels: labels_"${SUFFIX}",
+          datasets: [
+            {
+              label: 'Total',
+              data: total_"${SUFFIX}",
+              backgroundColor: 'rgba(54, 162, 235, 0.2)',
+              borderColor: 'rgba(54, 162, 235, 1)',
             },
-            yAxis : {
-            ${YMAXSTRING}
-            title : {
-            text: 'Bandwidth Used'
+            {
+              label: 'Down',
+              data: down_"${SUFFIX}",
+              backgroundColor: 'rgba(120, 120, 120, 0.2)',
+              borderColor: 'rgba(120, 120, 120, 1)',
+            },
+            {
+              label: 'Up',
+              data: up_"${SUFFIX}",
+              backgroundColor: 'rgba(75, 192, 192, 0.2)',
+              borderColor: 'rgba(75, 192, 192, 1)',
+            },
+          ]    
+        },
+        options: {
+          elements: {
+            rectangle: {
+              borderWidth: 1,
+              barPercentage: 0.9,
+              categoryPercentage: 0.5,
+            },
           },
-          labels : {
-          formatter: function () {
-          return '<b>'+getSize(this.value)+'</b>';
-        }
-      }
-    },
-    xAxis : {
-    allowDecimals: false, " >> ${HTMPATH}
-
-    # AXISRANGE is maximum number of items on the xAxis before scrolling;
-    # so "min" value for xAxis in the chart should be the desired max number
-    # of items to graph (RANGE) minus the desired axis range (AXISRANGE)
-    MINVALUE=$((RANGE - AXISRANGE))
-    if [ $MINVALUE -lt 0 ]; then
-      MINVALUE=0
-    fi
-    echo "min: "${MINVALUE}"," >> ${HTMPATH}
-    echo "
-    labels: {
-    format: '{value}',
-  }
-},
-scrollbar: {
-enabled: true
-            },
-            tooltip : {
-            useHTML: true,
-            formatter: function () {
-            return '<b>'+this.point.series.name+'</b><br />'+getSize(this.point.y)+'<br />';
+          responsive: true,
+          title: {
+            display: true,
+            text: \""${TITLE}"\",
+            fontSize: 18,
+          },
+          scales: {
+            xAxes: [{
+              ticks: {
+                min: minX_"${SUFFIX}",
+                callback: function(value, index, values) {
+                  return formatDate('"${SUFFIX}"', new Date(value * 1000));
+                },
+              },
+            }],
+            yAxes: [{
+              scaleLabel: {
+                display: true,
+                labelString: 'Bandwidth Used',
+              },
+              ticks: {
+                beginAtZero: true,
+                callback: function(value, index, values) {
+                  return getSize(value);
+                },
+              },
+            }],
+          },
+          tooltips: {
+            callbacks: {
+              label: function(tooltipItem, data) {
+                var label = data.datasets[tooltipItem.datasetIndex].label || '';
+                if (label) {
+                  label += ': ';
+                }
+                label += getSize(tooltipItem.yLabel);
+                return label;
+              },
+              title: function(tooltipItem, data) {
+                return formatDate('"${SUFFIX}"', new Date(tooltipItem[0].xLabel * 1000));
+              },
+            }
+          },
+          legend: {
+            position: 'bottom',
+          },
+          plugins: {
+            zoom: {
+              pan: {
+                enabled: true,
+                mode: 'xy',
+                speed: 1,
+                threshold: 10,
+                rangeMin: {
+                  y: 0,
+                },
+                rangeMax: {
+                  y: 1.1 * maxY_"${SUFFIX}",
+                },
+                onPan: function({chart}) {
+                  var btn = document.getElementById('resetZoom-"${SUFFIX}"');
+                  btn.style.display = 'block';
+                },
+              },
+              zoom: {
+                enabled: true,
+                mode: 'y',
+                rangeMin: {
+                  y: 0,
+                },
+                rangeMax: {
+                  y: 1.1 * maxY_"${SUFFIX}",
+                },
+                onZoom: function({chart}) {
+                  var btn = document.getElementById('resetZoom-"${SUFFIX}"');
+                  btn.style.display = 'block';
+                },
+              }
           }
         },
-      }); });</script>" >> ${HTMPATH}
+      }
+    });</script>" >> ${HTMPATH}
   fi
 
   rm -f /tmp/inrange_$$.tmp
 
 }
 
-updategraphdb() {
+updategraphdb()
+{
   YEARDB=${1}
   MONTHDB=${2}
   DAYDB=${3}
@@ -326,13 +409,58 @@ publishdetailhtm()
   YEARLYHTM=${6}
   TITLE=${7}
 
-  echo "<html><head><meta name="format-detection" content="telephone=no"><meta http-equiv=\"Pragma\" content=\"no-cache\"><meta http-equiv=\"Expires\" content=\"-1\"><meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" /><title>"${TITLE}" Detail</title><link rel=\"stylesheet\" href=\""$CSSPATH"/usage.css\" /><link rel=\"stylesheet\" href=\""$CSSPATH"/tabcontent/tabcontent.css\" /><script src=\""$JSPATH"/tabcontent.js\" type=\"text/javascript\"></script><script src=\""$JSPATH"/usage.js\" type=\"text/javascript\"></script><script src=\""$JSPATH"/runOnLoad.js\" type=\"text/javascript\"></script><script src=\""$JSPATH"/HighchartsAdapter.js\"></script><script src=\""$JSPATH"/highstock.js\"></script><script src=\""$JSPATH"/data.js\"></script><script src=\""$JSPATH"/exporting.js\"></script></head><body><h1>"${TITLE}"<br /><span class=\"text-small\">"${PAGETITLE}"</span></h1>" > ${DETAILHTM}
-  echo "<p><button onclick=\"window.history.back(); window.close();\">Close Window</button></p>" >> ${DETAILHTM}
-  echo "<ul class=\"tabs\" data-persist=\"false\">" >> ${DETAILHTM}
-  echo "  <li><a href=\"\#daily\">Daily</a></li>" >> ${DETAILHTM}
-  echo "  <li><a href=\"\#monthly\">Monthly</a></li>" >> ${DETAILHTM}
-  echo "  <li><a href=\"\#yearly\">Yearly</a></li>" >> ${DETAILHTM}
-  echo "</ul>" >> ${DETAILHTM}
+  > ${DETAILHTM}
+
+  echo "<html>
+    <head>
+      <meta name=\"format-detection\" content=\"telephone=no\">
+      <meta http-equiv=\"Pragma\" content=\"no-cache\">
+      <meta http-equiv=\"Expires\" content=\"-1\">
+      <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" />
+      <title>"${TITLE}" Detail</title>
+      <link rel=\"stylesheet\" href=\""$CSSPATH"/Chart.min.css\" />
+      <link rel=\"stylesheet\" href=\""$CSSPATH"/usage.css\" />
+      <link rel=\"stylesheet\" href=\""$CSSPATH"/tabcontent/tabcontent.css\" />
+      <script src=\""$JSPATH"/tabcontent.js\"></script>
+      <script src=\""$JSPATH"/usage.js\"></script>
+      <script src=\""$JSPATH"/Chart.min.js\"></script>
+      <script src=\""$JSPATH"/hammer.min.js\"></script>
+      <script src=\""$JSPATH"/chartjs-plugin-zoom.min.js\"></script>
+      <script>
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+        function formatDate(dmy, date) {
+          var day = ('0' + date.getDate()).slice(-2);
+          var year = date.getFullYear();
+  
+          if (dmy === 'daily') {
+              return [year + '-' + months[date.getMonth()] + '-' + day, '(' + days[date.getDay()] + ')'];
+          }
+          else if (dmy === 'monthly') {
+              return months[date.getMonth()] + '-' + year;
+          }
+          else if (dmy === 'yearly') {
+              return year;
+          }
+        }
+
+        function resetZoom(chart, btn) {
+          chart.resetZoom();
+          btn.style.display = 'none';
+        }
+      </script>
+    </head>
+
+    <body>
+      <h1>"${TITLE}"<br><span class=\"text-small\">"${PAGETITLE}"</span></h1>
+      <span class="back-link" onclick=\"window.history.back();\">&laquo; Back</span>
+      <ul class=\"tabs\" data-persist=\"false\">
+        <li><a href=\"\#daily\">Daily</a></li>
+        <li><a href=\"\#monthly\">Monthly</a></li>
+        <li><a href=\"\#yearly\">Yearly</a></li>
+      </ul>
+  " >> ${DETAILHTM}
   echo "<div class=\"tabcontents\">" >> ${DETAILHTM}
   echo "<div id=\"daily\">" >> ${DETAILHTM}
   cat ${DAILYHTM} >> ${DETAILHTM}
@@ -355,12 +483,20 @@ publishWatchList()
   MBQUOTAPER=${4}
   WATCHLISTTITLE=${5}
 
+  # Handle quotes/double-quotes
+  WATCHLISTTITLE=${WATCHLISTTITLE//\'/\\\'}
+  WATCHLISTTITLE=${WATCHLISTTITLE//\"/\\\"}
+
   if [ "$MBQUOTAPER" != "" ]; then
 
     echo 'var watchList = {' >> ${WATCHLISTHTM}
 
     for name in $WATCHLISTARRAY ; do
-      echo '"'$name'": 0, ' >> ${WATCHLISTHTM}
+      # Handle quotes/double-quotes
+      ESCAPED_NAME=${name//\'/\\\'}
+      ESCAPED_NAME=${ESCAPED_NAME//\"/\\\"}
+
+      echo '"'${ESCAPED_NAME}'": 0, ' >> ${WATCHLISTHTM}
 
       # If the name is prefixed with specified string, don't shut off their
       # connection -- but DO restore their connection
@@ -377,7 +513,7 @@ publishWatchList()
       # "tail -n 1" pipe and "echo $USERALLDEVICESTOTAL" inside loop
       USERALLDEVICESTOTAL=0
 
-      if grep -q $name ${TOTALSDB}; then
+      if grep -iq $name ${TOTALSDB}; then
       USERALLDEVICESTOTAL=`
       grep -i $name ${TOTALSDB} | while IFS=, read USER USAGE MAC
       do
@@ -554,7 +690,7 @@ case ${1} in
         [ "${IN}" == "" ] && IN=0                                               
         [ "${OUT}" == "" ] && OUT=0
 
-        if ([ ! ${IN} == "0" ] || [ ! ${OUT} == "0" ]);  then
+        if ([ ! ${IN} == 0 ] || [ ! ${OUT} == 0 ]);  then
             echo "DEBUG : New traffic for ${MAC} since last update : ${IN}k:${OUT}k"
         
             LINE=$(grep ${MAC} ${2})
@@ -718,7 +854,7 @@ case ${1} in
     # .htm directory to publish main total usage page
     [ -z "${4}" ] && echo "ERROR : Missing argument 4" && exit 1
     [ -d "${4}" ] || mkdir -p ${4}
-    USAGEHTM=${4}/${PREFIX}usage.htm
+    USAGEHTM=${4}/usage.htm
     TMPUSAGEHTM=/tmp/usage_$$.tmp
 
     [ -z "${5}" ] || USERSFILE=${5}
@@ -782,11 +918,25 @@ case ${1} in
 
     done
     unlock
-
         # create HTML page
-        echo "<html><head><meta http-equiv=\"Pragma\" content=\"no-cache\"><meta http-equiv=\"Expires\" content=\"-1\"><meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" /><title>Traffic</title><link rel=\"stylesheet\" href=\"css/usage.css\" /><script src=\"js/usage.js\" type=\"text/javascript\"></script><script src=\"js/sorttable.js\" type=\"text/javascript\"></script><script src=\"js/tablefilter.js\" type=\"text/javascript\"></script><script type=\"text/javascript\">var routerNameArray = [ \""${ROUTERNAME}"\" ]; document.onkeypress = function(evt) { /* Firefoxes uses onkeypress, Chrome uses onkeydown */ if(/firefox/.test(navigator.userAgent.toLowerCase())){ resetFilterKeypress(evt, routerNameArray); } }; document.onkeydown = function(evt) { /* Firefoxes uses onkeypress, Chrome uses onkeydown */ if(/chrom(e|ium)/.test(navigator.userAgent.toLowerCase())){ resetFilterKeypress(evt, routerNameArray); } };</script></head><body>" >> $TMPUSAGEHTM
+        echo "<html>
+          <head>
+            <meta http-equiv=\"Pragma\" content=\"no-cache\">
+            <meta http-equiv=\"Expires\" content=\"-1\">
+            <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" />
+            <title>Traffic</title>
+            <link rel=\"stylesheet\" href=\"css/usage.css\" />
+            <script src=\"js/usage.js\"></script>
+            <script src=\"js/sorttable.js\"></script>
+            <script src=\"js/tablefilter.js\"></script>
+            <script>
+              document.onkeydown = function(evt) {
+                resetFilterKeypress(evt, \""${ROUTERNAME}"\");
+              };</script>
+          </head>
+          <body>" >> $TMPUSAGEHTM
         echo "<h1>"${PAGETITLE}"</h1>" >> $TMPUSAGEHTM
-        echo "<script type=\"text/javascript\">" >> $TMPUSAGEHTM
+        echo "<script>" >> $TMPUSAGEHTM
 
         TOTALSDB=/tmp/totalsdb.tmp
         > $TOTALSDB
@@ -817,6 +967,10 @@ case ${1} in
 
                 echo ${USER},${USERTOTAL},${MAC} >> $TOTALSDB
 
+                # Handle quotes/double-quotes
+                USER=${USER//\'/\\\'}
+                USER=${USER//\"/\\\"}
+
                 echo "\"${USER}\",\"${MAC}\",${PEAKUSAGE_IN}000,${PEAKUSAGE_OUT}000,${OFFPEAKUSAGE_IN}000,${OFFPEAKUSAGE_OUT}000,${USERTOTAL}000,${DOWNTOTAL}000,${UPTOTAL}000,\"${LASTUPDATE}\"" >> $TMPUSAGEHTM
 
                 ##################################################
@@ -827,8 +981,6 @@ case ${1} in
                   # Get rid of colons; replace with dashes
                   MACDASHED=${MAC//:/-}
                   [ -d ${REPORTSHTMDIR}/${MACDASHED} ] || mkdir -p ${REPORTSHTMDIR}/${MACDASHED}
-
-                  USER=${USER//\'/\\\'}
 
                   for SUFFIX in yearly monthly daily
                   do
@@ -858,7 +1010,6 @@ case ${1} in
                   MONTHLYHTM=${REPORTSHTMDIR}/${MACDASHED}/monthly_detail.htm
                   DAILYHTM=${REPORTSHTMDIR}/${MACDASHED}/daily_detail.htm
                   TITLE=${ORIGUSER}" ("${MAC}")"
-
 
                   CSSPATH=../../css
                   JSPATH=../../js
@@ -944,12 +1095,12 @@ case ${1} in
         echo "if (daysElapsed > 0 && daysElapsed > 1) divisor = daysElapsed;" >> $TMPUSAGEHTM
         echo "document.write('<p>"${DESCRIPTION}"</p>');" >> $TMPUSAGEHTM
 
-        echo "document.write('<table id=\"summarytable\"><tr onclick=\"goToTotalsDetail()\"><th>GRAND TOTAL<br />for <span class=\"warning\">'+parseFloat(daysElapsed).toFixed(1) +' day(s)</span>.</th><th>TOTAL<br />DOWN</th><th>TOTAL<br />UP</th><th>AVERAGE<br />DAILY</th><th>AVERAGE<br /> DAILY<br />DOWN</th><th>AVERAGE<br />DAILY<br />UP</th><th>TODAY<br />TOTAL</th><th>TODAY<br />DOWN</th><th>TODAY<br />UP</th><tr onclick=\"goToTotalsDetail()\"><td class=\"hilite\">'+getSize("${GRANDTOTAL}")+' / '+mbTotalQuota+'</td><td>'+getSize("${GRANDDOWN}")+' &#x25BC;</td><td>'+getSize("${GRANDUP}")+' &#x25B2;</td><td class="hilite">'+getSize("${GRANDTOTAL}"/divisor)+'</td><td>'+getSize("${GRANDDOWN}"/divisor)+' &#x25BC;</td><td>'+getSize("${GRANDUP}"/divisor)+' &#x25B2;</td><td class=\"hilite\">'+getSize("${TODAYTOTAL}000")+'</td><td>'+getSize("${TODAYDOWN}000")+' &#x25BC;</td><td>'+getSize("${TODAYUP}000")+' &#x25B2;</td></tr></table>');" >> $TMPUSAGEHTM
+        echo "document.write('<table id=\"summarytable\"><tr onclick=\"goToTotalsDetail()\"><th>GRAND TOTAL<br>for <span class=\"warning\">'+parseFloat(daysElapsed).toFixed(1) +' day(s)</span>.</th><th>TOTAL<br>DOWN</th><th>TOTAL<br>UP</th><th>AVERAGE<br>DAILY</th><th>AVERAGE<br> DAILY<br>DOWN</th><th>AVERAGE<br>DAILY<br>UP</th><th>TODAY<br>TOTAL</th><th>TODAY<br>DOWN</th><th>TODAY<br>UP</th><tr onclick=\"goToTotalsDetail()\"><td class=\"hilite\">'+getSize("${GRANDTOTAL}")+' / '+mbTotalQuota+'</td><td>'+getSize("${GRANDDOWN}")+' &#x25BC;</td><td>'+getSize("${GRANDUP}")+' &#x25B2;</td><td class="hilite">'+getSize("${GRANDTOTAL}"/divisor)+'</td><td>'+getSize("${GRANDDOWN}"/divisor)+' &#x25BC;</td><td>'+getSize("${GRANDUP}"/divisor)+' &#x25B2;</td><td class=\"hilite\">'+getSize("${TODAYTOTAL}000")+'</td><td>'+getSize("${TODAYDOWN}000")+' &#x25BC;</td><td>'+getSize("${TODAYUP}000")+' &#x25B2;</td></tr></table>');" >> $TMPUSAGEHTM
         echo "document.write('<p><form id=\"search-form\"><b>Filter:</b> <span class=\"text-input-wrapper\"><input id=\"filterquery-"${ROUTERNAME}"\" onkeyup=\'filter(this, \"filterclearbtn-"${ROUTERNAME}"\", \"usertable-"${ROUTERNAME}"\")\' type=\"text\" autofocus><span onclick=\'resetfilter(\"filterclearbtn-"${ROUTERNAME}"\", \"filterquery-"${ROUTERNAME}"\", \"usertable-"${ROUTERNAME}"\")\' id=\"filterclearbtn-"${ROUTERNAME}"\" title=\"Clear\">&times;</span></span><span class=\"text-small\"> &larr; Type your name here to see your individual total.</span></form></p>');" >> $TMPUSAGEHTM
-        echo "document.write('<table id=\"usertable-"${ROUTERNAME}"\" class=\"usertable sortable\"><tr><th>User</th><th>Total<br />used</th><th>Total<br />down</th><th>Total<br />up</th><!-- <th>Peak<br />down</th><th>Peak<br />up</th><th>Offpeak<br />down</th><th>Offpeak<br />up</th> --><th>Average<br />Daily<br />Total</th><th>Average<br />Daily<br />Down</th><th>Average<br />Daily<br />Up</th><th>Today<br />Total</th><th>Today<br />Down</th><th>Today<br />Up</th><th>Last update</th></tr>');" >> $TMPUSAGEHTM
+        echo "document.write('<table id=\"usertable-"${ROUTERNAME}"\" class=\"usertable sortable\"><tr><th>User</th><th>Total<br>used</th><th>Total<br>down</th><th>Total<br>up</th><!-- <th>Peak<br>down</th><th>Peak<br>up</th><th>Offpeak<br>down</th><th>Offpeak<br>up</th> --><th>Average<br>Daily<br>Total</th><th>Average<br>Daily<br>Down</th><th>Average<br>Daily<br>Up</th><th>Today<br>Total</th><th>Today<br>Down</th><th>Today<br>Up</th><th>Last update</th></tr>');" >> $TMPUSAGEHTM
 
         echo "for (i=0; i < values.length-(values[values.length-2][1] === \"COUNTERSTART\" ? 2 : 1); i++) { if (values[i][1].trim() !== \"00:00:00:00:00:00\") { var lastUpdate = values[i][9].split('.'); document.write('<tr onclick=\"goToDetail(this)\"><td sorttable_customkey=\"'+values[i][0].toLowerCase().trim()+'\"><span class=\"username'); var warnval = values[i][0].indexOf(\"_warning\"); var alertval = values[i][0].indexOf(\"_alert\"); if (warnval > -1) { document.write(' warning'); values[i][0] = values[i][0].substring(0, warnval); } if (alertval > -1) { document.write(' alert'); values[i][0] = values[i][0].substring(0, alertval); } document.write('\">'); " >> $TMPUSAGEHTM
-        echo "document.write(values[i][0]+'</span><br />'+values[i][1]+'</td>');" >> $TMPUSAGEHTM
+        echo "document.write(values[i][0]+'</span><br>'+values[i][1]+'</td>');" >> $TMPUSAGEHTM
         echo "document.write('<td sorttable_customkey=\"'+values[i][6]+'\" class=\"coltotal\">'+getSize(values[i][6])+'</td>');" >> $TMPUSAGEHTM
         echo "document.write('<td sorttable_customkey=\"'+values[i][7]+'\" class=\"coltotal\">'+getSize(values[i][7])+' &#x25BC;</td>');" >> $TMPUSAGEHTM
         echo "document.write('<td sorttable_customkey=\"'+values[i][8]+'\" class=\"coltotal\">'+getSize(values[i][8])+' &#x25B2;</td>');" >> $TMPUSAGEHTM
@@ -961,7 +1112,7 @@ case ${1} in
         echo "document.write('<td sorttable_customkey=\"'+values[i][12]+'\" class=\"coltoday\">'+getSize(values[i][12])+' &#x25B2;</td>');" >> $TMPUSAGEHTM
         echo "document.write('<td sorttable_customkey=\"'+lastUpdate[1]+'\">'+lastUpdate[0]+'</td>');" >> $TMPUSAGEHTM
         echo "} } document.write('</tr></table>');</script>" >> $TMPUSAGEHTM
-        echo "<br /><small>This page was generated on `date -d @${DATE}`</small>" 2>&1 >> $TMPUSAGEHTM
+        echo "<br><small>This page was generated on `date -d @${DATE}`</small>" 2>&1 >> $TMPUSAGEHTM
         echo "</body></html>" >> $TMPUSAGEHTM
 
         mv ${TMPUSAGEHTM} ${USAGEHTM}
