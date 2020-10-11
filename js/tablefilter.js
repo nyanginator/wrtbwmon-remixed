@@ -1,3 +1,10 @@
+/*
+
+tablefilter.js
+@author Nicholas Yang
+
+*/
+
 // Filter Totals in an array, 1st element is not used (User column)
 var sums;
 
@@ -106,7 +113,7 @@ function filter(phrase, clearBtnId, tableId){
   }
 }
 
-// For then the Reset button is clicked
+// For when the X button is clicked in the search filter box
 function resetfilter(clearBtnId, queryBoxId, tableId) {
   var clearBtn = document.getElementById(clearBtnId);
   clearBtn.style.visibility = "hidden";
@@ -126,11 +133,25 @@ function resetfilter(clearBtnId, queryBoxId, tableId) {
     elt.parentNode.removeChild(elt);
 }
 
+// Resets search filter, given a router name (set router name in config)
+function resetFilterKeypress(evt, routerName) {
+  evt = evt || window.event;
+  var isEscape = false;
+
+  if ("key" in evt) {
+    isEscape = evt.key == "Escape";
+  }
+
+  if (isEscape) {
+    resetfilter("filterclearbtn-"+routerName, "filterquery-"+routerName, "usertable-"+routerName);
+  }
+}
+
 // Helper function to convert String value (e.g. "1.2 G") to number of bytes
 function getSizeInBytes(size) {
-  var prefix=new Array("b","k","M","G","T","P","E","Z");
-  var base=1000;
-  var pos=0;
+  var prefix = ["b", "k", "M", "G", "T", "P", "E", "Z"];
+  var base = 1000;
+  var pos = 0;
 
   splitted = size.split(" ");
   result = parseFloat(splitted[0]);
@@ -144,44 +165,26 @@ function getSizeInBytes(size) {
 
 // Helper function to convert number of bytes into formatted String value
 function getSize(size) {
-  var prefix=new Array("b","k","M","G","T","P","E","Z");
-  var base=1000;
-  var pos=0;
+  var prefix = ["b", "k", "M", "G", "T", "P", "E", "Z"];
+  var base = 1000;
+  var pos = 0;
 
-  while (size>base) {
-    size/=base;
+  while (size > base) {
+    size /= base;
     pos++;
   }
 
-  if (pos > 2) precision=1000;
-  else precision = 1;
+  if (pos > 2)
+    precision = 1000.0;
+  else
+    precision = 1.0;
 
-  var result=(Math.round(size*precision)/precision)+' '+prefix[pos];
+  var result = (Math.round(size*precision)/precision) + ' ' + prefix[pos];
 
-  if (result == 0) {
+  if (result == 0)
     return "0 k";
-  }
-  else if (result == 1000) {
+  else if (result == 1000)
     return "1 k";
-  }
 
   return result;
-}
-
-function resetFilterKeypress(evt, routerNameArray) {
-  evt = evt || window.event;
-  var isEscape = false;
-
-  if ("key" in evt) {
-    isEscape = evt.key == "Escape";
-  }
-  else {
-    isEscape = evt.keyCode == 27;
-  }
-
-  if (isEscape) {
-    for (var i = 0; i < routerNameArray.length; ++i) {
-      resetfilter("filterclearbtn-"+routerNameArray[i], "filterquery-"+routerNameArray[i], "usertable-"+routerNameArray[i]);
-    }
-  }
 }

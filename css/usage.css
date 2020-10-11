@@ -2,27 +2,40 @@
 
 body {
   font-family: "Lucida Grande", "Lucida Sans Unicode", Arial, Helvetica, sans-serif;
-  margin: 20px 15px;
+  padding: 1rem;
+  margin: 0 auto;
+  max-width: 1200px;
 }
 
 h1, h2, h3 {
   min-width: 768px;
+  margin-bottom: 0.5rem;
 }
 
 h4 {
   margin: 8px 0 4px 0;
 }
 
-button {
-  padding: 12px 20px;
-  cursor:pointer;
-  background-color: #fff;
-  border: 1px solid #b7b7b7;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+.detailsChartWrapper {
+  position: relative;
 }
 
-button:hover {
-  background-color: #eee;
+.reset-button {
+  display: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.back-link {
+  display: inline-block;
+  margin: 1rem 0;
+  color: blue;
+  cursor: pointer;
+}
+
+.back-link:hover {
+  text-decoration: underline;
 }
 
 .text-small {

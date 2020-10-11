@@ -1,44 +1,31 @@
 /*
 
 usage.js
-by Nicholas Yang
+@author Nicholas Yang
 
 */
 
-var chartdaily, chartmonthly, chartyearly;
-
-function redrawCharts(chart) {
-  if (chartdaily) {
-    chartdaily.reflow();
-    chartdaily.redraw();
-    chartmonthly.reflow();
-    chartmonthly.redraw();
-    chartyearly.reflow();
-    chartyearly.redraw();
-  }
-}
-
 function getSize(size) {
-  var prefix=new Array("","k","M","G","T","P","E","Z");
-  var base=1000;
-  var pos=0;
+  var prefix = ["b", "k", "M", "G", "T", "P", "E", "Z"];
+  var base = 1000;
+  var pos = 0;
 
-  while (size>base) {
-    size/=base;
+  while (size > base) {
+    size /= base;
     pos++;
   }
 
-  if (pos > 2) precision=1000;
-  else precision = 1;
+  if (pos > 2) 
+    precision = 1000.0;
+  else
+    precision = 1.0;
 
-  var result=(Math.round(size*precision)/precision)+' '+prefix[pos];
+  var result = (Math.round(size*precision)/precision) + ' ' + prefix[pos];
 
-  if (result == 0) {
+  if (result == 0)
     return "0 k";
-  }
-  else if (result == 1000) {
+  else if (result == 1000)
     return "1 k";
-  }
 
   return result;
 }
@@ -58,7 +45,7 @@ function goToDetail(row, pathPrefix) {
       }
     }
   }
-  window.open(htmFile,"_blank");
+  window.open(htmFile, '_parent');
 }
 
 function goToTotalsDetail(pathPrefix) {
@@ -66,5 +53,5 @@ function goToTotalsDetail(pathPrefix) {
   pathPrefix = typeof pathPrefix !== 'undefined' ? pathPrefix : '.';
 
   var htmFile = pathPrefix + "/reports/detail.htm";
-  window.open(htmFile,"_blank");
+  window.open(htmFile, '_parent');
 }
