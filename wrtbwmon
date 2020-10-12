@@ -165,13 +165,13 @@ publishgraphhtm()
     var maxY_'${SUFFIX}' = 0;
     var labels_'${SUFFIX}' = [];
     var total_'${SUFFIX}' = [];
-    var up_'${SUFFIX}' = [];
     var down_'${SUFFIX}' = [];
+    var up_'${SUFFIX}' = [];
     for (var i = 0; i < data_'${SUFFIX}'.length; i += 4) {
       labels_'${SUFFIX}'.push(data_'${SUFFIX}'[i]);
       total_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 1]);
-      up_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 2]);
-      down_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 3]);
+      down_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 2]);
+      up_'${SUFFIX}'.push(data_'${SUFFIX}'[i + 3]);
 
       if (maxY_'${SUFFIX}' < data_'${SUFFIX}'[i + 1])
         maxY_'${SUFFIX}' = data_'${SUFFIX}'[i + 1];
@@ -295,7 +295,7 @@ publishgraphhtm()
               },
               zoom: {
                 enabled: true,
-                mode: 'y',
+                mode: 'xy',
                 rangeMin: {
                   y: 0,
                 },
