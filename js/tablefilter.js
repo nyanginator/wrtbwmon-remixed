@@ -140,6 +140,9 @@ function resetFilterKeypress(evt, routerName) {
 
   if ("key" in evt) {
     isEscape = evt.key == "Escape";
+
+    if (evt.key == "Enter")
+      event.preventDefault();
   }
 
   if (isEscape) {

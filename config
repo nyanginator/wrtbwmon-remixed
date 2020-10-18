@@ -1,6 +1,8 @@
-# Find this value using command: date +%s -d "9/1/15"
-# A full day/month/year MUST pass from this date for it to show up in graph
-AXISSTARTDATE=1420099200
+# A full day/week/month/year must pass from this date for it to show up in the
+# associated chart. Find this value (UTC seconds since Epoch) using the
+# command: date +%s -d "MM/DD/YY". Data from before this date is ignored, which
+# is useful if you don't want to waste time calculating too far into the past.
+AXISSTARTDATE=1420099200  # 01 Jan 2015
 
 PAGETITLE="Internet Usage"
 HEADING="Resets on 1st of every month." # Or whenever you set cron to reset
@@ -14,19 +16,40 @@ ROUTERNAME="router"
 # Subdirectory of /tmp/www/ to publish the usage.htm file to
 WWWSUBDIR=""
 
+# X-axis range for each chart type
+RANGE_DAILY=21
+RANGE_WEEKLY=10
+RANGE_MONTHLY=12
+RANGE_YEARLY=5
+
+# Number of ticks visible on X-axis before having to zoom/pan/drag the chart
+AXISRANGE_DAILY=7
+AXISRANGE_WEEKLY=5
+AXISRANGE_MONTHLY=6
+AXISRANGE_YEARLY=5
+
 # In MB, when users on the watch list are within 2 increments of this value,
 # they will appear on the list
 WATCHLISTSTEP="1000"
 
-# You can set a limit per person in every "watch list" defined below. It should
-# include: 1) quota per person, 2) title, 3) array of names to watch. Name array
-# should be unique 1-word names only, separated by spaces.
+# You can set a limit per person in every "watch list" defined below. Each
+# watch list should include variables for: quota per person, title, and array
+# of names to watch. The name array should consist of unique 1-word names
+# separated by spaces. For example:
+# 
+#   WATCHLISTARRAY="Calvin Phoebe Justin"
+# 
+# The user Calvin might have devices named (in users.txt) "Calvin's Phone",
+# "Calvin's iPad", and "Calvin's Laptop". All 3 devices would count towards
+# Calvin's quota.
+#
 # NOTES:
-#   a. If you add a new watch list, wrtbwmon script must also be updated.
-#      Just add another line of publishWatchList() after the others with
-#      the new vars.
+#   a. If you add a new watch list (in addition to the STUDENT and GUEST lists
+#      below), the wrtbwmon script must also be updated. You'd need to add
+#      another line of publishWatchList() with the vars you define below.
 #   b. Prepend "SKIP_" to the name if you want the name to appear in the watch
-#      list but not turned off when over the specified limit.
+#      list but not be turned off when over the specified limit. "SKIP_" would
+#      also restore any suspended connections for that name.
 MBQUOTAPERSTUDENT="10000"
 STUDENTWATCHLISTTITLE="Students"
 STUDENTWATCHLISTARRAY=""

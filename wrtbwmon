@@ -21,6 +21,14 @@ DATESTAMPMONTH=$(date +\%m -d @${DATE})
 DATESTAMPDAY=$(date +\%d -d @${DATE})
 DATESTAMPTIME=$(date +\%H\.\%M.\%S -d @${DATE})
 
+# Strings to identify today's date and match against dates saved in the daily,
+# weekly, monthly, and yearly DB files
+DATEIDDAY=$(date +\%d-\%m-\%Y -d @${DATE})
+DATEIDWEEK=$(date +\%V-\%Y -d @${DATE})
+DATEIDMONTH=$(date +\%m-\%Y -d @${DATE})
+DATEIDYEAR=$(date +\%Y -d @${DATE})
+
+
 LAN_IFACE=$(nvram get lan_ifname)
 
 lock()
@@ -40,6 +48,7 @@ unlock()
     rm -f /tmp/wrtbwmon.lock
 }
 
+# Creates the HTM page for a specific daily/weekly/yearly/monthly chart
 publishgraphhtm()
 {
   DBPATH=$1
@@ -50,91 +59,102 @@ publishgraphhtm()
   MAC=$6
 
   if [ -f ${DBPATH} ]; then
-    # RANGE is how far back in time to go, what the first value on the X-axis
-    # should be if we scroll all the way to the beginning of the graph. We
-    # first assume the RANGE and MULTFACT for years, and then change those
-    # values according to SUFFIX if necessary
-    RANGE=5
-    MULTFACT=31536000
-
     # Offset to account for February and leap years; we want the day in the
     # middle of the month, if we're calculating for year/month
     THEDAYTODAY=$(date +\%e -d @${DATE})
     OFFSET=$(((THEDAYTODAY - 15) * 86400))
 
-    if [ "${SUFFIX}" == "monthly" ]; then
-      RANGE=12
-      MULTFACT=2628000
-    fi
-    if [ "${SUFFIX}" == "daily" ]; then
-      RANGE=14
-      MULTFACT=86400
-      OFFSET=0 # no need for offset when dealing with days
+    # RANGE is how far back in time to go, what the first value on the X-axis
+    # should be if we scroll all the way to the beginning of the chart
+    if [ "${SUFFIX}" == "yearly" ]; then
+      RANGE=${RANGE_YEARLY}
+      MULTFACT=31536000 # Yearly range is every 365 days
+    elif [ "${SUFFIX}" == "monthly" ]; then
+      RANGE=${RANGE_MONTHLY}
+      MULTFACT=2628000 # Seconds in a year / 12 months
+    elif [ "${SUFFIX}" == "weekly" ]; then
+      RANGE=${RANGE_WEEKLY}
+      MULTFACT=604800 # Seconds in a day * 7 days
+      OFFSET=0 # No need for offset when dealing with weeks
+    elif [ "${SUFFIX}" == "daily" ]; then
+      RANGE=${RANGE_DAILY}
+      MULTFACT=86400 # Seconds in 1 day
+      OFFSET=0 # No need for offset when dealing with days
     fi
     STARTDATE=$((DATE - RANGE * MULTFACT))
     STARTDATE=$((STARTDATE - OFFSET))
 
+    # Create a JS array with all the pertinent data first
     echo '<script>var data_'${SUFFIX}' = [' > ${HTMPATH}
 
-    YAXISMAX=0
-
-    # Padding days/months/years, we iterate through whole RANGE regardless;
-    # if any day is not consecutive, add that zero entry; if the day is found
-    # (using grep) in the DB file, then use those values instead
-
-    # Need to convert dates into a non-numeric format
+    # Convert dates into a more easily identifiable format for .tmp file
     cat ${DBPATH} | while IFS=, read DBDATE USAGE
     do
-      DIFF=$((DATE - DBDATE))
+      if [ "${SUFFIX}" == "yearly" ]; then
       LABEL=`date +\%Y -d @${DBDATE}`
-      if [ "${SUFFIX}" == "monthly" ]; then
-        LABEL=`date +\%b-\%Y -d @${DBDATE}`
-      fi
-      if [ "${SUFFIX}" == "daily" ]; then
+      elif [ "${SUFFIX}" == "monthly" ]; then
+        LABEL=`date +\%m-\%Y -d @${DBDATE}`
+      elif [ "${SUFFIX}" == "weekly" ]; then
+        LABEL=`date +\%V-\%Y -d @${DBDATE}`
+      elif [ "${SUFFIX}" == "daily" ]; then
         LABEL=`date +\%Y-\%b-\%d -d @${DBDATE}`
       fi
 
+      # Create a .tmp file with a collection of dates present in the DB file.
+      # Ignore dates that go too far back in time (based on RANGE).
+      DIFF=$((DATE - DBDATE))
       RANGEDIFF=$((DIFF / MULTFACT))
       if [ "$RANGEDIFF" -lt "$RANGE" ]; then
         echo "LABEL,"${LABEL},${DBDATE},${USAGE} >> /tmp/inrange_$$.tmp
       fi
     done
 
+    # For each date in the RANGE, get data and generate label for X-axis tick.
+    # Iterate through the whole RANGE in the DB file; if any tick mark's data
+    # is missing, add a zero entry.
     CURRDATE=${STARTDATE}
     while [ ${CURRDATE} -lt $((DATE + MULTFACT)) ]; do
-      RAWDATE=${CURRDATE}
-
+      # Get the date of this tick and format it to compare against today's date
+      if [ "${SUFFIX}" == "yearly" ]; then
       LABEL=`date +\%Y -d @${CURRDATE}`
-      if [ "${SUFFIX}" == "monthly" ]; then
-        LABEL=`date +\%b-\%Y -d @${CURRDATE}`
-      fi
-      if [ "${SUFFIX}" == "daily" ]; then
+      elif [ "${SUFFIX}" == "monthly" ]; then
+        LABEL=`date +\%m-\%Y -d @${CURRDATE}`
+      elif [ "${SUFFIX}" == "weekly" ]; then
+        LABEL=`date +\%V-\%Y -d @${CURRDATE}`
+      elif [ "${SUFFIX}" == "daily" ]; then
         LABEL=`date +\%Y-\%b-\%d -d @${CURRDATE}`
       fi
 
-      # If our iterator is in the future (i.e. it has a value that is between
-      # $DATE and $((DATE + MULTFACT))), check to see that we haven't gone
-      # past today's year/month/day. We don't want to print future dates.
+      # If the iterator gets too far ahead, then it will match up with today.
+      # We should break if that's the case (reached end of the X-axis).
       if [ "${CURRDATE}" -gt "${DATE}" ]; then
-        DATECHECK=$((CURRDATE - MULTFACT))
+        DATECHECK=$((CURRDATE - MULTFACT)) # This should be one y/m/w/d behind
         DATECHECKYEAR=$(date +\%Y -d @${DATECHECK})
-        DATECHECKMONTH=$(date +\%m -d @${DATECHECK})
-        DATECHECKDAY=$(date +\%d -d @${DATECHECK})
-        if ([ "${SUFFIX}" == "daily" ] && [ "${DATESTAMPDAY}" -eq "${DATECHECKDAY}" ]) || ([ "${SUFFIX}" == "monthly" ] && [ "${DATESTAMPMONTH}" -eq "${DATECHECKMONTH}" ]) || ([ "${SUFFIX}" == "yearly" ] && [ "${DATESTAMPYEAR}" -eq "${DATECHECKYEAR}" ]); then
+        DATECHECKMONTH=$(date +\%m-\%Y -d @${DATECHECK})
+        DATECHECKWEEK=$(date +\%V-\%Y -d @${DATECHECK})
+        DATECHECKDAY=$(date +\%d-\%m-\%Y -d @${DATECHECK})
+
+        if ([ "${SUFFIX}" == "daily" ] && [ "${DATEIDDAY}" == "${DATECHECKDAY}" ]) || \
+          ([ "${SUFFIX}" == "weekly" ] && [ "${DATEIDWEEK}" == "${DATECHECKWEEK}" ]) || \
+          ([ "${SUFFIX}" == "monthly" ] && [ "${DATEIDMONTH}" == "${DATECHECKMONTH}" ]) || \
+          ([ "${SUFFIX}" == "yearly" ] && [ "${DATEIDYEAR}" == "${DATECHECKYEAR}" ]); then
           break
         fi
       fi
 
+      # If this tick mark's date has data in the DB file, get it (.tmp file)
       FOUND=""
       if [ -f /tmp/inrange_$$.tmp ]; then
         FOUND=`grep "LABEL,"$LABEL /tmp/inrange_$$.tmp`
 
-        # In case there are unexpected multiple entries (i.e. more than one
-        # label is found with Oct-2016), use only the last most-recent one
+        # In case there are unexpected multiple entries (e.g. more than one
+        # label is found with 10-2016), use only the last most-recent one
         FOUND=`echo "${FOUND}" | tail -1 | head -1`
       fi
 
+      # Make sure it's a valid date, according to AXISSTARTDATE (set in config)
       if [ ${CURRDATE} -gt ${AXISSTARTDATE} ]; then
+        # If we have previous data to add to, retrieve it and add to it
         if [ "$FOUND" != "" ]; then
           DBDATE=$(echo ${FOUND} | cut -f3 -s -d, )
           PEAKUSAGE_IN=$(echo ${FOUND} | cut -f4 -s -d, )
@@ -145,21 +165,19 @@ publishgraphhtm()
           UPTOTAL=$((PEAKUSAGE_OUT + OFFPEAKUSAGE_OUT))000
           GRANDTOTAL=$((PEAKUSAGE_IN+OFFPEAKUSAGE_IN+PEAKUSAGE_OUT+OFFPEAKUSAGE_OUT))000
 
-          GRANDTOTALKB=$((PEAKUSAGE_IN+OFFPEAKUSAGE_IN+PEAKUSAGE_OUT+OFFPEAKUSAGE_OUT))
-          if [ "${GRANDTOTALKB}" -gt "${YAXISMAX}" ]; then
-            YAXISMAX=${GRANDTOTALKB}
-          fi
-
-          echo ${RAWDATE}', '${GRANDTOTAL}', '${DOWNTOTAL}', '${UPTOTAL}', ' >> ${HTMPATH}
+          # Write out the data for this tick mark into the JS array
+          echo ${CURRDATE}', '${GRANDTOTAL}', '${DOWNTOTAL}', '${UPTOTAL}', ' >> ${HTMPATH}
         else
-          echo ${RAWDATE}', 0, 0, 0,' >> ${HTMPATH}
+          # If this tick mark has no data (from DB file), put in a zero entry
+          echo ${CURRDATE}', 0, 0, 0,' >> ${HTMPATH}
         fi
       fi
 
-      # Increase iterator
+      # Increase iterator to next tick mark
       CURRDATE=$((CURRDATE + MULTFACT))
     done
 
+    # Close the array and then use JS to reorganize the data for Chart.js
     echo '];
 
     var maxY_'${SUFFIX}' = 0;
@@ -191,7 +209,7 @@ publishgraphhtm()
       </div>
     ' >> ${HTMPATH}
 
-    # AXISRANGE is no. of items shown on xAxis before having to pan the view
+    # AXISRANGE is no. of items shown on xAxis before having to zoom/pan/drag
     echo "<script>
       var minX_"${SUFFIX}" = labels_"${SUFFIX}"[labels_"${SUFFIX}".length - 1 - "${AXISRANGE}"];
 
@@ -251,6 +269,7 @@ publishgraphhtm()
               },
               ticks: {
                 beginAtZero: true,
+                max: 1.05 * maxY_"${SUFFIX}",
                 callback: function(value, index, values) {
                   return getSize(value);
                 },
@@ -281,12 +300,8 @@ publishgraphhtm()
                 enabled: true,
                 mode: 'xy',
                 speed: 1,
-                threshold: 10,
                 rangeMin: {
                   y: 0,
-                },
-                rangeMax: {
-                  y: 1.1 * maxY_"${SUFFIX}",
                 },
                 onPan: function({chart}) {
                   var btn = document.getElementById('resetZoom-"${SUFFIX}"');
@@ -300,7 +315,7 @@ publishgraphhtm()
                   y: 0,
                 },
                 rangeMax: {
-                  y: 1.1 * maxY_"${SUFFIX}",
+                  y: 1.05 * maxY_"${SUFFIX}",
                 },
                 onZoom: function({chart}) {
                   var btn = document.getElementById('resetZoom-"${SUFFIX}"');
@@ -317,42 +332,64 @@ publishgraphhtm()
 
 }
 
+# Adds KB to daily/weekly/monthly/yearly DB files (specify amounts for IN/OUT)
 updategraphdb()
 {
   YEARDB=${1}
   MONTHDB=${2}
-  DAYDB=${3}
-  IN=${4}
-  OUT=${5}
-  OFFPEAK=${6}
+  WEEKDB=${3}
+  DAYDB=${4}
+  IN=${5}
+  OUT=${6}
+  OFFPEAK=${7}
 
-  # Update graph totals for yearly, monthly, daily
-  for DBPATH in "${DAYDB}" "${MONTHDB}" "${YEARDB}"
+  # Update chart totals for daily, weekly, monthly, yearly
+  for DBPATH in "${DAYDB}" "${WEEKDB}" "${MONTHDB}" "${YEARDB}"
   do
     PEAKUSAGE_IN=0
     PEAKUSAGE_OUT=0
     OFFPEAKUSAGE_IN=0
     OFFPEAKUSAGE_OUT=0
+
+    # Get last entry, if it exists
     LINE=`tail -1 $DBPATH | head -1`
     if [ ! -z "${LINE}" ]; then
       STOREDDATE=$(echo ${LINE} | cut -f1 -s -d, )
 
-      DBSTORED=`date +\%d -d @${STOREDDATE}`
-      YMD=`date +\%d -d @${DATE}`
-      [ "${DBPATH}" == "${MONTHDB}" ] && DBSTORED=`date +\%m -d @${STOREDDATE}` && YMD=`date +\%m -d @${DATE}`
-      [ "${DBPATH}" == "${YEARDB}" ] && DBSTORED=`date +\%Y -d @${STOREDDATE}` && YMD=`date +\%Y -d @${DATE}`
+      if [ "${DBPATH}" == "${DAYDB}" ]; then
+        DBSTORED=`date +\%d-\%m-\%Y -d @${STOREDDATE}`
+        YMWD=${DATEIDDAY}
+      elif [ "${DBPATH}" == "${WEEKDB}" ]; then
+        DBSTORED=`date +\%V-\%Y -d @${STOREDDATE}`
+        YMWD=${DATEIDWEEK}
+      elif [ "${DBPATH}" == "${MONTHDB}" ]; then
+        DBSTORED=`date +\%m-\%Y -d @${STOREDDATE}`
+        YMWD=${DATEIDMONTH}
+      elif [ "${DBPATH}" == "${YEARDB}" ]; then
+        DBSTORED=`date +\%Y -d @${STOREDDATE}`
+        YMWD=${DATEIDYEAR}
+      fi
 
-      if [ "$STOREDDATE" -gt "$DATE" ] || [ $DBSTORED == "${YMD}" ]; then
+      # If the last line in the DB file has a date that still applies to today,
+      # grab that data so we can update the numbers.
+      if [ $DBSTORED == "${YMWD}" ]; then
         PEAKUSAGE_IN=$(echo ${LINE} | cut -f2 -s -d, )
         PEAKUSAGE_OUT=$(echo ${LINE} | cut -f3 -s -d, )
         OFFPEAKUSAGE_IN=$(echo ${LINE} | cut -f4 -s -d, )
         OFFPEAKUSAGE_OUT=$(echo ${LINE} | cut -f5 -s -d, )
 
+        # Copy all but the last line to .tmp file. Basically discard this entry
+        # so we can append it again later with the updated numbers.
         head -n -1 $DBPATH > /tmp/db_$$.tmp
+      # If the last line doesn't have today's date, there's nothing to update or
+      # discard. We just need to append a new line with the new numbers, so copy
+      # over all previous numbers in this case.
       else
         cat $DBPATH > /tmp/db_$$.tmp
       fi
     fi
+
+    # Add the KB of IN/OUT
     if [ "${OFFPEAK}" = "offpeak" ]; then
       OFFPEAKUSAGE_IN=$((${OFFPEAKUSAGE_IN}+${IN}))
       OFFPEAKUSAGE_OUT=$((${OFFPEAKUSAGE_OUT}+${OUT}))
@@ -361,54 +398,65 @@ updategraphdb()
       PEAKUSAGE_OUT=$((${PEAKUSAGE_OUT}+${OUT}))
     fi
 
-    if [ ${DATE} -gt 1000000 ];  then
-      echo ${DATE},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT} >> /tmp/db_$$.tmp
-      mv /tmp/db_$$.tmp $DBPATH
-    else
-      rm /tmp/db_$$.tmp
-    fi
+    # Append new numbers to the .tmp file
+    echo ${DATE},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT} >> /tmp/db_$$.tmp
+
+    # Rename .tmp file to be the DB file
+    mv /tmp/db_$$.tmp $DBPATH
   done
 }
 
-# ONLY gets called if this MAC address has any traffic
+# Advances to next day/week/month/year in the DB file if needed
 checkreset()
 {
   MAC=${1}
   REPORTSDBDIR=${2}
-  KEEPMAC=${3}
 
   MACDASHED=${MAC//:/-}
-  for SUFFIX in daily monthly yearly
+  for SUFFIX in daily weekly monthly yearly
   do
-    YMDDB=${REPORTSDBDIR}/${MACDASHED}_${SUFFIX}.db
-    if [ -f "$YMDDB" ]; then
-      YMDDBLASTLINE=`tail -1 ${YMDDB} | head -1`
-      YMDDBDATE=$(echo ${YMDDBLASTLINE} | cut -f1 -s -d, )
+    DBFILE=${REPORTSDBDIR}/${MACDASHED}_${SUFFIX}.db
 
-      YMDDBDATEDMY=`date +\%d -d @${YMDDBDATE}`
-      [ "${SUFFIX}" == "monthly" ] && YMDDBDATEDMY=`date +\%m -d @${YMDDBDATE}`
-      [ "${SUFFIX}" == "yearly" ] && YMDDBDATEDMY=`date +\%Y -d @${YMDDBDATE}`
+    # If the DB file already exists, check if we need to advance to next cycle
+    if [ -f "$DBFILE" ]; then
+      DBLASTLINE=`tail -1 ${DBFILE} | head -1`
+      DBDATE=$(echo ${DBLASTLINE} | cut -f1 -s -d, )
 
-      if ([ "${SUFFIX}" == "daily" ] && [ ! "${DATESTAMPDAY}" -eq "${YMDDBDATEDMY}" ]) || ([ "${SUFFIX}" == "monthly" ] && [ ! "${DATESTAMPMONTH}" -eq "${YMDDBDATEDMY}" ]) || ([ "${SUFFIX}" == "yearly" ] && [ ! "${DATESTAMPYEAR}" -eq "${YMDDBDATEDMY}" ]); then
-        echo ${DATE},0,0,0,0 >> ${YMDDB}
+      # Get the last date value from the DB file
+      DATECHECKYEAR=$(date +\%Y -d @${DBDATE})
+      DATECHECKMONTH=$(date +\%m-\%Y -d @${DBDATE})
+      DATECHECKWEEK=$(date +\%V-\%Y -d @${DBDATE})
+      DATECHECKDAY=$(date +\%d-\%m-\%Y -d @${DBDATE})
+
+      # If it doesn't match today, it means we've entered a new cycle. Reset
+      # counters and append a new line for the new day/week/month/year.
+      if ([ "${SUFFIX}" == "daily" ] && [ ! "${DATEIDDAY}" == "${DATECHECKDAY}" ]) || \
+        ([ "${SUFFIX}" == "weekly" ] && [ ! "${DATEIDWEEK}" == "${DATECHECKWEEK}" ]) || \
+        ([ "${SUFFIX}" == "monthly" ] && [ ! "${DATEIDMONTH}" == "${DATECHECKMONTH}" ]) || \
+        ([ "${SUFFIX}" == "yearly" ] && [ ! "${DATEIDYEAR}" == "${DATECHECKYEAR}" ]); then
+        echo ${DATE},0,0,0,0 >> ${DBFILE}
       fi
+    # If DB file doesn't exist yet, create a new file with zeroed-out counters
     else
-      touch $YMDDB
-      echo ${DATE},0,0,0,0 >> ${YMDDB}
+      touch $DBFILE
+      echo ${DATE},0,0,0,0 >> ${DBFILE}
     fi
   done
 }
 
+# Combines the daily/weekly/monthly/yearly HTM pages into a single tabbed page
 publishdetailhtm()
 {
   CSSPATH=${1}
   JSPATH=${2}
   DETAILHTM=${3}
   DAILYHTM=${4}
-  MONTHLYHTM=${5}
-  YEARLYHTM=${6}
-  TITLE=${7}
+  WEEKLYHTM=${5}
+  MONTHLYHTM=${6}
+  YEARLYHTM=${7}
+  TITLE=${8}
 
+  # Start with a blank file and create everything from scratch
   > ${DETAILHTM}
 
   echo "<html>
@@ -430,17 +478,39 @@ publishdetailhtm()
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-        function formatDate(dmy, date) {
+        // dwmy - One of [\"daily\", \"weekly\", \"monthly\", \"yearly\"]
+        // date - A Date object with the date data to display
+        function formatDate(dwmy, date) {
           var day = ('0' + date.getDate()).slice(-2);
+          var month = months[date.getMonth()];
           var year = date.getFullYear();
   
-          if (dmy === 'daily') {
-              return [year + '-' + months[date.getMonth()] + '-' + day, '(' + days[date.getDay()] + ')'];
+          if (dwmy === 'daily') {
+              // Use an array so Chart.js puts in a newline
+              return [year + '-' + month + '-' + day, '(' + days[date.getDay()] + ')'];
           }
-          else if (dmy === 'monthly') {
-              return months[date.getMonth()] + '-' + year;
+          else if (dwmy === 'weekly') {
+              // Get previous Monday, since that is when the ISO week starts
+              date.setDate(date.getDate() - (date.getDay() + 6) % 7);
+
+              var start_day = ('0' + date.getDate()).slice(-2);
+              var start_month = months[date.getMonth()];
+              var start_year = date.getFullYear();
+
+              // Get following Sunday (end of the ISO week)
+              date.setDate(date.getDate() + 6);
+
+              var end_day = ('0' + date.getDate()).slice(-2);
+              var end_month = months[date.getMonth()];
+              var end_year = date.getFullYear();
+
+              // Use an array so Chart.js puts in a newline
+              return [start_year + '-' + start_month + '-' + start_day + ' to ', end_year + '-' + end_month + '-' + end_day];
           }
-          else if (dmy === 'yearly') {
+          else if (dwmy === 'monthly') {
+              return month + '-' + year;
+          }
+          else if (dwmy === 'yearly') {
               return year;
           }
         }
@@ -457,6 +527,7 @@ publishdetailhtm()
       <span class="back-link" onclick=\"window.history.back();\">&laquo; Back</span>
       <ul class=\"tabs\" data-persist=\"false\">
         <li><a href=\"\#daily\">Daily</a></li>
+        <li><a href=\"\#weekly\">Weekly</a></li>
         <li><a href=\"\#monthly\">Monthly</a></li>
         <li><a href=\"\#yearly\">Yearly</a></li>
       </ul>
@@ -464,6 +535,9 @@ publishdetailhtm()
   echo "<div class=\"tabcontents\">" >> ${DETAILHTM}
   echo "<div id=\"daily\">" >> ${DETAILHTM}
   cat ${DAILYHTM} >> ${DETAILHTM}
+  echo "</div>" >> ${DETAILHTM}
+  echo "<div id=\"weekly\">" >> ${DETAILHTM}
+  cat ${WEEKLYHTM} >> ${DETAILHTM}
   echo "</div>" >> ${DETAILHTM}
   echo "<div id=\"monthly\">" >> ${DETAILHTM}
   cat ${MONTHLYHTM} >> ${DETAILHTM}
@@ -474,7 +548,8 @@ publishdetailhtm()
   echo "</div></body></html>" >> ${DETAILHTM}
 }
 
-# This will also shutdown or restore connections based on quota
+# Creates the HTML for a watch list. Also shuts down or restores connections
+# based on the set quota
 publishWatchList()
 {
   TOTALSDB=${1}
@@ -532,22 +607,22 @@ publishWatchList()
             cat /tmp/uadt_macs.tmp | while IFS= read MAC
             do
               echo "  "${MAC}" cut off"
-              iptables -I FORWARD -m mac --mac-source ${MAC} -j DROP
+              iptables -I FORWARD -m mac --mac-source ${MAC} -j DROP -w
             done
           else
             echo "  config file says skip, so resume connection!"
             cat /tmp/uadt_macs.tmp | while IFS= read MAC
             do
-              iptables -I FORWARD -m mac --mac-source ${MAC} -j ACCEPT
+              iptables -I FORWARD -m mac --mac-source ${MAC} -j ACCEPT -w
             done
           fi
         else
-          # not over quota, so resume connection
+          # Not over quota, so resume connection
           echo "QUOTA : "${WATCHLISTTITLE}" : "${name}" is below quota"
           echo "  not over quota, resume connection"
           cat /tmp/uadt_macs.tmp | while IFS= read MAC
           do
-            iptables -I FORWARD -m mac --mac-source ${MAC} -j ACCEPT
+            iptables -I FORWARD -m mac --mac-source ${MAC} -j ACCEPT -w
           done
         fi
       fi
@@ -613,10 +688,10 @@ case ${1} in
 
 "setup" )
 
-    #Create the RRDIPT CHAIN (it doesn't matter if it already exists).
+    # Create the RRDIPT CHAIN (it doesn't matter if it already exists)
     iptables -N RRDIPT -w 2> /dev/null
 
-    #Add the RRDIPT CHAIN to the FORWARD chain (if non existing).
+    # Add the RRDIPT CHAIN to the FORWARD chain (if non existing)
     iptables -L FORWARD --line-numbers -n -w | grep "RRDIPT" | grep "1" > /dev/null
     if [ $? -ne 0 ]; then
         iptables -L FORWARD -n -w | grep "RRDIPT" > /dev/null
@@ -627,10 +702,10 @@ case ${1} in
         iptables -I FORWARD -j RRDIPT -w
     fi
 
-    #For each host in the ARP table
+    # For each host in the ARP table
     grep ${LAN_IFACE} /proc/net/arp | while read IP TYPE FLAGS MAC MASK IFACE
     do
-        #Add iptable rules (if non existing).
+        # Add iptable rules (if non-existing)
         iptables -nL RRDIPT -w | grep "${IP} " > /dev/null
         if [ $? -ne 0 ]; then
             iptables -I RRDIPT -d ${IP} -j RETURN -w
@@ -644,7 +719,7 @@ case ${1} in
     [ -z "${2}" ] && echo "ERROR : Missing argument 2" && exit 1
     [ -f "${2}" ] || echo "COUNTERSTART",0,0,0,0,${DATE} >> ${2}
 
-    # path to directory to write the daily/monthly/yearly database data
+    # Path to directory to write the daily/weekly/monthly/yearly DB data
     [ -z "${3}" ] && echo "ERROR : Missing argument 3" && exit 1
     REPORTSDBDIR=${3}
     [ -d ${REPORTSDBDIR} ] || mkdir -p ${REPORTSDBDIR}
@@ -657,13 +732,14 @@ case ${1} in
 
     lock
 
-    #Read and reset counters
-    iptables -L RRDIPT -vnxZ -t filter > /tmp/traffic_$$.tmp
+    # Read and reset counters
+    iptables -L RRDIPT -vnxZ -t filter -w > /tmp/traffic_$$.tmp
 
     grep -v "0x0" /proc/net/arp  | while read IP TYPE FLAGS MAC MASK IFACE
     do
-        #Add new data to the graph. Count in Kbs to deal with 16 bits signed values (up to 2G only)
-        #Have to use temporary files because of crappy busybox shell
+        # Add new data to the chart. Count in Kbs to deal with 16 bits signed
+        # values (up to 2G only). Have to use temporary files because of crappy
+        # busybox shell (ash)
 
         # Get around this problem with Solution 3: http://www.linuxprogrammingblog.com/pipe-in-bash-can-be-a-trap
         IN=`
@@ -720,11 +796,13 @@ case ${1} in
 
             echo ${MAC},${PEAKUSAGE_IN},${PEAKUSAGE_OUT},${OFFPEAKUSAGE_IN},${OFFPEAKUSAGE_OUT},${DATE} >> ${2}
 
-            ########################################
-            ### Update daily/yearly/monthly data ###
-            ########################################
+            ###############################################
+            ### Update daily/weekly/yearly/monthly data ###
+            ###############################################
 
-            checkreset "${MAC}" "${REPORTSDBDIR}" "${KEEPMAC}"
+            # Check each DB file of this MAC address to see if we need to reset
+            # counters and advance to a new line
+            checkreset "${MAC}" "${REPORTSDBDIR}"
 
             # Get rid of colons; replace with dashes so we can use in filename
             MACDASHED=${MAC//:/-}
@@ -734,22 +812,26 @@ case ${1} in
             [ -f "$YEARDB" ] || touch $YEARDB
             MONTHDB=${REPORTSDBDIR}/${MACDASHED}_monthly.db
             [ -f "$MONTHDB" ] || touch $MONTHDB
+            WEEKDB=${REPORTSDBDIR}/${MACDASHED}_weekly.db
+            [ -f "$WEEKDB" ] || touch $WEEKDB
             DAYDB=${REPORTSDBDIR}/${MACDASHED}_daily.db
             [ -f "$DAYDB" ] || touch $DAYDB
-            updategraphdb "${YEARDB}" "${MONTHDB}" "${DAYDB}" "${IN}" "${OUT}" "${OFFPEAK}"
+            updategraphdb "${YEARDB}" "${MONTHDB}" "${WEEKDB}" "${DAYDB}" "${IN}" "${OUT}" "${OFFPEAK}"
 
             # Grand totals update
             YEARDB=${REPORTSDBDIR}/yearly.db
             [ -f "$YEARDB" ] || touch $YEARDB
             MONTHDB=${REPORTSDBDIR}/monthly.db
             [ -f "$MONTHDB" ] || touch $MONTHDB
+            WEEKDB=${REPORTSDBDIR}/weekly.db
+            [ -f "$WEEKDB" ] || touch $WEEKDB
             DAYDB=${REPORTSDBDIR}/daily.db
             [ -f "$DAYDB" ] || touch $DAYDB
-            updategraphdb "${YEARDB}" "${MONTHDB}" "${DAYDB}" "${IN}" "${OUT}" "${OFFPEAK}"
+            updategraphdb "${YEARDB}" "${MONTHDB}" "${WEEKDB}" "${DAYDB}" "${IN}" "${OUT}" "${OFFPEAK}"
         fi
     done
     
-    #Free some memory
+    # Free some memory
     rm -f /tmp/*_$$.tmp
     unlock
     ;;
@@ -760,28 +842,28 @@ case ${1} in
     ### START OF ARGUMENTS SECTION ###
     ##################################
 
-    # database file
+    # Database file
     [ -z "${2}" ] && echo "ERROR : Missing argument 2" && exit 1
     [ ! -f "${2}" ] && echo "ERROR : Database file ${2} does not exist" && exit 1
 
-    # directory of yearly/monthly/daily database files
+    # Directory of daily/weekly/monthly/yearly database files
     [ -z "${3}" ] && echo "ERROR : Missing argument 3" && exit 1
     REPORTSDBDIR=${3}
 
-    # path to backup to
+    # Path to backup to
     [ -z "${4}" ] && echo "ERROR : Missing argument 4" && exit 1
     [ -d "${4}" ] || mkdir -p ${4}
     BACKUPDIR=${4}
 
-    # users file
+    # Users file
     [ -z "${5}" ] && echo "ERROR : Missing argument 5" && exit 1
     USERSFILE=${5}
 
-    # keep or forget MAC addresses in usage.db (doesn't affect userfile)
+    # Keep or forget MAC addresses in usage.db (doesn't affect userfile)
     [ -z "${6}" ] && echo "ERROR : Missing argument 6" && exit 1
     KEEPMAC=${6}
 
-    # optional 7th parameter specifies a directory to purge
+    # Optional 7th parameter specifies a directory to purge
 
     ################################
     ### END OF ARGUMENTS SECTION ###
@@ -789,7 +871,7 @@ case ${1} in
     
     lock
 
-    # make backups
+    # Make backups
     DEST=${BACKUPDIR}/$DATESTAMPYEAR
     [ -d ${DEST} ] || mkdir $DEST
     DEST=${DEST}/$DATESTAMPMONTH
@@ -805,7 +887,7 @@ case ${1} in
 
     [ "${1}" == "backup" ] && echo "DEBUG : backup complete " && exit 1
 
-    # now handle extra steps for non-backup options
+    # Now handle extra steps for non-backup options
     echo "COUNTERSTART",0,0,0,0,${DATE} > /tmp/db_$$.tmp
 
     if [ ! "${KEEPMAC}" == "forget" ]; then
@@ -817,20 +899,20 @@ case ${1} in
       done
     fi
 
-    # this zeroes out the counters of usage.db
+    # This zeroes out the counters of usage.db
     mv /tmp/db_$$.tmp ${2}
 
-    # also reset anybody's connection that was cut off
-    iptables -F
+    # Also reset anybody's connection that was cut off
+    iptables -F -w
 
-    # reset numbers for daily
+    # Reset numbers for daily
     find ${REPORTSDBDIR} -type f -name "*daily.db" | while read DBFILE; do
       head -n -1 $DBFILE > /tmp/db_$$.tmp
       echo ${DATE},0,0,0,0 >> /tmp/db_$$.tmp
       mv /tmp/db_$$.tmp $DBFILE
     done
 
-    # optionally-specified backup directory to purge
+    # Optionally-specified backup directory to purge
     [ -z "${7}" ] || rm -rf ${7}/*
 
     unlock
@@ -842,11 +924,11 @@ case ${1} in
     ### START OF ARGUMENTS SECTION ###
     ##################################
 
-    # database file
+    # Database file
     [ -z "${2}" ] && echo "ERROR : Missing argument 2" && exit 1
     [ ! -f "${2}" ] && echo "ERROR : Database file ${2} does not exist" && exit 1
 
-    # directory of yearly/monthly/daily database files
+    # Directory of database files
     [ -z "${3}" ] && echo "ERROR : Missing argument 3" && exit 1
     [ ! -d "${3}" ] && echo "ERROR : Invalid reports database directory ${3}" && exit 1
     REPORTSDBDIR=${3}
@@ -864,7 +946,7 @@ case ${1} in
     ### END OF ARGUMENTS SECTION ###
     ################################
 
-    # directory to publish yearly/monthly/daily .htm reports
+    # Directory to publish .htm reports
     REPORTSHTMDIR=${4}/reports
     [ -d "${REPORTSHTMDIR}" ] || mkdir -p ${REPORTSHTMDIR}
 
@@ -948,16 +1030,12 @@ case ${1} in
                 USER=$(grep "${MAC}" "${USERSFILE}" | cut -f2 -s -d, )
                 DNSMASQUSER=$(grep "${MAC}" "${DNSMASQFILE}" | cut -f4 -s -d ' ')
 
-                [ -z "$USER" ] && USER="$DNSMASQUSER"
+                [ -z "$USER" ] && USER="${DNSMASQUSER}_warning"
                 if [ -z "$USER" ] || [ "$USER" == "*" ]; then
                   USER="UNKNOWN"
                 fi
 
                 ORIGUSER=$USER
-
-                if [ "$DNSMASQUSER" == "$USER" ]; then
-                  USER=${USER}_warning
-                fi
 
                 # If username contains string "UNKNOWN", add some CSS styling
                 UNKSTR="UNKNOWN"
@@ -973,33 +1051,38 @@ case ${1} in
 
                 echo "\"${USER}\",\"${MAC}\",${PEAKUSAGE_IN}000,${PEAKUSAGE_OUT}000,${OFFPEAKUSAGE_IN}000,${OFFPEAKUSAGE_OUT}000,${USERTOTAL}000,${DOWNTOTAL}000,${UPTOTAL}000,\"${LASTUPDATE}\"" >> $TMPUSAGEHTM
 
-                ##################################################
-                ### Publish to yearly/monthly/daily HTML pages ###
-                ##################################################
+                #########################################################
+                ### Publish to daily/weekly/monthly/yearly HTML pages ###
+                #########################################################
 
                 if [ ! ${MAC} == "COUNTERSTART" ] && [ ! ${MAC} == "00:00:00:00:00:00" ]; then
                   # Get rid of colons; replace with dashes
                   MACDASHED=${MAC//:/-}
+
+                  # Create HTM directory for this device if it does not yet exist
                   [ -d ${REPORTSHTMDIR}/${MACDASHED} ] || mkdir -p ${REPORTSHTMDIR}/${MACDASHED}
 
-                  for SUFFIX in yearly monthly daily
+                  for SUFFIX in daily weekly monthly yearly
                   do
                     TITLE=${ORIGUSER}" ("${MAC}")"
                     HTMPATH=${REPORTSHTMDIR}/${MACDASHED}/${SUFFIX}_detail.htm
-                    [ -f "$HTMPATH" ] || echo "No "${SUFFIX}" data published yet." > $HTMPATH
-
-                    SUFFIXCAP="Yearly"
-                    AXISRANGE=10
-                    if [ "${SUFFIX}" == "monthly" ]; then
-                      SUFFIXCAP="Monthly"
-                      AXISRANGE=12
-                    fi
-                    if [ "${SUFFIX}" == "daily" ]; then
-                      SUFFIXCAP="Daily"
-                      AXISRANGE=7
-                    fi
-
                     DBPATH=${REPORTSDBDIR}/${MACDASHED}_${SUFFIX}.db
+
+                    [ -s "${DBPATH}" ] || echo "No "${SUFFIX}" data published yet." > $HTMPATH
+
+                    if [ "${SUFFIX}" == "yearly" ]; then
+                    SUFFIXCAP="Yearly"
+                      AXISRANGE=${AXISRANGE_YEARLY}
+                    elif [ "${SUFFIX}" == "monthly" ]; then
+                      SUFFIXCAP="Monthly"
+                      AXISRANGE=${AXISRANGE_MONTHLY}
+                    elif [ "${SUFFIX}" == "weekly" ]; then
+                      SUFFIXCAP="Weekly"
+                      AXISRANGE=${AXISRANGE_WEEKLY}
+                    elif [ "${SUFFIX}" == "daily" ]; then
+                      SUFFIXCAP="Daily"
+                      AXISRANGE=${AXISRANGE_DAILY}
+                    fi
 
                     publishgraphhtm "${DBPATH}" "${SUFFIX}" "${HTMPATH}" "${SUFFIXCAP} Usage for ${TITLE}" "${AXISRANGE}" "${MAC}"
                   done
@@ -1008,13 +1091,14 @@ case ${1} in
                   [ -f "$DETAILHTM" ] || touch $DETAILHTM
                   YEARLYHTM=${REPORTSHTMDIR}/${MACDASHED}/yearly_detail.htm
                   MONTHLYHTM=${REPORTSHTMDIR}/${MACDASHED}/monthly_detail.htm
+                  WEEKLYHTM=${REPORTSHTMDIR}/${MACDASHED}/weekly_detail.htm
                   DAILYHTM=${REPORTSHTMDIR}/${MACDASHED}/daily_detail.htm
                   TITLE=${ORIGUSER}" ("${MAC}")"
 
                   CSSPATH=../../css
                   JSPATH=../../js
 
-                  publishdetailhtm "${CSSPATH}" "${JSPATH}" "${DETAILHTM}" "${DAILYHTM}" "${MONTHLYHTM}" "${YEARLYHTM}" "${TITLE}"
+                  publishdetailhtm "${CSSPATH}" "${JSPATH}" "${DETAILHTM}" "${DAILYHTM}" "${WEEKLYHTM}" "${MONTHLYHTM}" "${YEARLYHTM}" "${TITLE}"
 
                   DBPATH=${REPORTSDBDIR}/${MACDASHED}_daily.db
                   LASTUPDATERAW=$(echo ${LASTUPDATE} | cut -f2 -s -d. )
@@ -1117,23 +1201,27 @@ case ${1} in
 
         mv ${TMPUSAGEHTM} ${USAGEHTM}
 
-        for SUFFIX in yearly monthly daily
+        for SUFFIX in daily weekly monthly yearly
         do
           HTMPATH=${REPORTSHTMDIR}/${SUFFIX}_detail.htm
           touch $HTMPATH
-
-          SUFFIXCAP="Yearly"
-          AXISRANGE=10
-          if [ "${SUFFIX}" == "monthly" ]; then
-            SUFFIXCAP="Monthly"
-            AXISRANGE=12
-          fi
-          if [ "${SUFFIX}" == "daily" ]; then
-            SUFFIXCAP="Daily"
-            AXISRANGE=7
-          fi
-
           DBPATH=${REPORTSDBDIR}/${SUFFIX}.db
+
+          [ -s "${DBPATH}" ] || echo "No "${SUFFIX}" data published yet." > $HTMPATH
+
+          if [ "${SUFFIX}" == "monthly" ]; then
+            SUFFIXCAP="Yearly"
+            AXISRANGE=${AXISRANGE_YEARLY}
+          elif [ "${SUFFIX}" == "monthly" ]; then
+            SUFFIXCAP="Monthly"
+            AXISRANGE=${AXISRANGE_MONTHLY}
+          elif [ "${SUFFIX}" == "weekly" ]; then
+            SUFFIXCAP="Weekly"
+            AXISRANGE=${AXISRANGE_WEEKLY}
+          elif [ "${SUFFIX}" == "daily" ]; then
+            SUFFIXCAP="Daily"
+            AXISRANGE=${AXISRANGE_DAILY}
+          fi
 
           publishgraphhtm "${DBPATH}" "${SUFFIX}" "${HTMPATH}" "Total ${SUFFIXCAP} Usage" "${AXISRANGE}" "Grand Totals"
         done
@@ -1141,17 +1229,15 @@ case ${1} in
         DETAILHTM=${REPORTSHTMDIR}/detail.htm
         [ -f "$DETAILHTM" ] || touch $DETAILHTM
         YEARLYHTM=${REPORTSHTMDIR}/yearly_detail.htm
-        [ -f "$YEARLYHTM" ] || echo "No yearly data published yet." > $YEARLYHTM
+        WEEKLYHTM=${REPORTSHTMDIR}/weekly_detail.htm
         MONTHLYHTM=${REPORTSHTMDIR}/monthly_detail.htm
-        [ -f "$MONTHLYHTM" ] || echo "No monthly data published yet." > $MONTHLYHTM
         DAILYHTM=${REPORTSHTMDIR}/daily_detail.htm
-        [ -f "$DAILYHTM" ] || echo "No daily data published yet." > $DAILYHTM
         TITLE="Grand Totals"
 
         CSSPATH=../css
         JSPATH=../js
 
-        publishdetailhtm "${CSSPATH}" "${JSPATH}" "${DETAILHTM}" "${DAILYHTM}" "${MONTHLYHTM}" "${YEARLYHTM}" "${TITLE}"
+        publishdetailhtm "${CSSPATH}" "${JSPATH}" "${DETAILHTM}" "${DAILYHTM}" "${WEEKLYHTM}" "${MONTHLYHTM}" "${YEARLYHTM}" "${TITLE}"
  
         #Free some memory
         rm -f /tmp/*_$$.tmp
