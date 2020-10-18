@@ -91,7 +91,7 @@ publishgraphhtm()
     cat ${DBPATH} | while IFS=, read DBDATE USAGE
     do
       if [ "${SUFFIX}" == "yearly" ]; then
-      LABEL=`date +\%Y -d @${DBDATE}`
+        LABEL=`date +\%Y -d @${DBDATE}`
       elif [ "${SUFFIX}" == "monthly" ]; then
         LABEL=`date +\%m-\%Y -d @${DBDATE}`
       elif [ "${SUFFIX}" == "weekly" ]; then
@@ -116,7 +116,7 @@ publishgraphhtm()
     while [ ${CURRDATE} -lt $((DATE + MULTFACT)) ]; do
       # Get the date of this tick and format it to compare against today's date
       if [ "${SUFFIX}" == "yearly" ]; then
-      LABEL=`date +\%Y -d @${CURRDATE}`
+        LABEL=`date +\%Y -d @${CURRDATE}`
       elif [ "${SUFFIX}" == "monthly" ]; then
         LABEL=`date +\%m-\%Y -d @${CURRDATE}`
       elif [ "${SUFFIX}" == "weekly" ]; then
@@ -763,7 +763,7 @@ case ${1} in
         `
 
         # Make sure we don't get an arithmetic syntax error
-        [ "${IN}" == "" ] && IN=0                                               
+        [ "${IN}" == "" ] && IN=0
         [ "${OUT}" == "" ] && OUT=0
 
         if ([ ! ${IN} == 0 ] || [ ! ${OUT} == 0 ]);  then
@@ -907,8 +907,22 @@ case ${1} in
 
     # Reset numbers for daily
     find ${REPORTSDBDIR} -type f -name "*daily.db" | while read DBFILE; do
-      head -n -1 $DBFILE > /tmp/db_$$.tmp
+      LINE=`tail -1 $DBFILE | head -1`
+      STOREDDATE=$(echo ${LINE} | cut -f1 -s -d, )
+      DBSTORED=`date +\%d-\%m-\%Y -d @${STOREDDATE}`
+
+      # If we're still in today, copy all but today's numbers
+      if [ "${DBSTORED}" == "${DATEIDDAY}" ]; then
+        head -n -1 $DBFILE > /tmp/db_$$.tmp
+      # Otherwise copy everything
+      else
+        cat $DBFILE > /tmp/db_$$.tmp
+      fi
+
+      # Now append today's entry, with all counters reset to zero
       echo ${DATE},0,0,0,0 >> /tmp/db_$$.tmp
+
+      # Rename the .tmp file into the DB file
       mv /tmp/db_$$.tmp $DBFILE
     done
 
@@ -1071,7 +1085,7 @@ case ${1} in
                     [ -s "${DBPATH}" ] || echo "No "${SUFFIX}" data published yet." > $HTMPATH
 
                     if [ "${SUFFIX}" == "yearly" ]; then
-                    SUFFIXCAP="Yearly"
+                      SUFFIXCAP="Yearly"
                       AXISRANGE=${AXISRANGE_YEARLY}
                     elif [ "${SUFFIX}" == "monthly" ]; then
                       SUFFIXCAP="Monthly"
@@ -1114,7 +1128,7 @@ case ${1} in
                     TODAYDOWN=$((TODAYPEAKUSAGE_IN + TODAYOFFPEAKUSAGE_IN))
                     TODAYUP=$((TODAYPEAKUSAGE_OUT + TODAYOFFPEAKUSAGE_OUT))
                     TODAYTOTAL=$((TODAYDOWN + TODAYUP))
-                
+
                     echo ","${TODAYTOTAL}000,${TODAYDOWN}000,${TODAYUP}000 >> $TMPUSAGEHTM
                   else
                     echo ",0,0,0" >> $TMPUSAGEHTM
