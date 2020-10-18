@@ -50,7 +50,7 @@ What This Is
 * Added sortable table columns
 * Added a table search filter
 * Added clickable rows for viewing detailed usage
-* Animated charts (using Chart.js) are viewable on tabs for daily, monthly, and yearly usage
+* Animated charts (using Chart.js) are viewable on tabs for daily, weekly, monthly, and yearly usage
 * Added a Grand Total row
 * Added Watch Lists to manage user quotas, which will automatically turn on/off Internet for devices
 * Added a config file for easier setting of variables
@@ -147,6 +147,18 @@ The config file stores mostly optional information. Fill them in according to yo
 * `ROUTERNAME` - Not really essential, but if you plan on ever merging the HTML output from multiple routers onto the same page, you will need a unique name for each router
 * `WWWSUBDIR` - Optional subdirectory for the web directory
 
+Range size (total X-axis length) for each chart:
+* `RANGE_DAILY`
+* `RANGE_WEEKLY`
+* `RANGE_MONTHLY`
+* `RANGE_YEARLY`
+
+Number of ticks visible (on the X-axis) before having to zoom/pan/drag the chart:
+* `AXISRANGE_DAILY`
+* `AXISRANGE_WEEKLY`
+* `AXISRANGE_MONTHLY`
+* `AXISRANGE_YEARLY`
+
 Watch Lists
 -----------
 The Watch List is a feature that automatically turns on/off Internet access for devices matching a certain search string (i.e. a user's name). Devices that should be turned on/off together must all be set in `/tmp/users.txt` with this search string. For example, say Calvin has 3 devices. In `users.txt`, they might be identified as `Calvin Phone`, `Calvin iPad`, and `Calvin Laptop`. In `config`, `Calvin` should be in the Watch List array.
@@ -205,7 +217,7 @@ File Format
 
 The `[not in use]` numbers were originally used to specify peak/offpeak data in the old `wrtbwmon` and are not used by `wrtbwmon-remixed`.
 
-If you need to modify numbers for daily/monthly/yearly usage, you will need to look in the `/tmp/reports/` directory. Grand total numbers are stored in `daily.db`, `monthly.db`, and `yearly.db`. Individual devices' numbers are stored in similarly named files prefixed with `[MAC address]_`. The format is:
+If you need to modify numbers for daily/weekly/monthly/yearly usage, you will need to look in the `/tmp/reports/` directory. Grand total numbers are stored in `daily.db`, `weekly.db`, `monthly.db`, and `yearly.db`. Individual devices' numbers are stored in similarly named files prefixed with `[MAC address]_`. The format is:
 
 ```
 [Unix time of Last Update],[kB downloaded],[kB uploaded],[not in use],[not in use]
@@ -234,7 +246,7 @@ I recommend a USB drive with 2G of space, depending on how often you clean out o
 
 Reports
 -------
-The `backupmin` and `backupkeep` commands copy the `reports` directory to the USB drive. The `reports` directory stores daily/monthly/yearly data on all devices that have ever connected to the router, so it may not be ideal to save everything, especially for temporary devices. Report files are named by MAC address, so you can identify the files by name and edit/delete them as needed.
+The `backupmin` and `backupkeep` commands copy the `reports` directory to the USB drive. The `reports` directory stores daily/weekly/monthly/yearly data on all devices that have ever connected to the router, so it may not be ideal to save everything, especially for temporary devices. Report files are named by MAC address, so you can identify the files by name and edit/delete them as needed.
 
 You will probably want to delete the backup copy at `/tmp/mnt/sda1/reports/` and then make changes in the live copy `/tmp/reports/`. Otherwise, if the backup commands are running on cron, the next backup may copy `/tmp/reports/` over any changes you make to `/tmp/mnt/sda1/reports/`.
 
@@ -270,9 +282,11 @@ $ /tmp/mnt/sda1/hardreset
 
 Notes
 =====
+* Touch events may or may not work depending on the specific browser and/or OS that you use.
+* Weeks are counted in ISO weeks, so each week begins on a Monday.
 * Make sure your USB drive is functioning properly. Failed read/writes to the drive will result in the script not working correctly.
-* The code is not as optimized as it could be, as this project was more of an exercise for me to explore scripting in the limited `ash` shell and play around with some of the possibilities of DD-WRT on my router.
-* I have only tested the script on NETGEAR routers running DD-WRT on a network having no more than about 15-25 connected devices. You may need to tweak settings according to your setup.
+* The code is not very optimized because the `ash` shell can be quite limiting.
+* I have only tested the script on NETGEAR routers running DD-WRT on a network having about 15-25 connected devices. You may need to tweak settings according to your setup.
 
 Contact
 =======
