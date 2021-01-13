@@ -290,5 +290,5 @@ Notes
 
 Contact
 =======
-Nicholas Yang\
-https://nicky.pairsite.com
+Nicholas Yang  
+https://nyanginator.com
