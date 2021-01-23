@@ -1044,22 +1044,35 @@ case ${1} in
                 USER=$(grep "${MAC}" "${USERSFILE}" | cut -f2 -s -d, )
                 DNSMASQUSER=$(grep "${MAC}" "${DNSMASQFILE}" | cut -f4 -s -d ' ')
 
-                [ -z "$USER" ] && USER="${DNSMASQUSER}_warning"
+                # If USER is not defined in /tmp/users.txt or the router has
+                # assigned the name "*", then there is no username, so assign
+                # the username of "UNKNOWN"
                 if [ -z "$USER" ] || [ "$USER" == "*" ]; then
                   USER="UNKNOWN"
                 fi
 
+                # Store the original unsuffixed username. We will be suffixing
+                # the username with "_warning" or "_alert" for specific CSS
+                # styling (classes will be added by JS) if the user isn't
+                # defined in the /tmp/users.txt file.
                 ORIGUSER=$USER
 
-                # If username contains string "UNKNOWN", add some CSS styling
-                UNKSTR="UNKNOWN"
-                if [ ! "${USER/$UNKSTR}" = "$USER" ] ; then
+                # If the user is unknown but there is a name defined by
+                # DNSMASQUSER, use that name instead. Update the unsuffixed
+                # name (ORIGUSER) and then suffix with "_warning".
+                if [ "$USER" == "UNKNOWN" ] && [ ! -z "$DNSMASQUSER" ]; then    
+                  ORIGUSER=$DNSMASQUSER
+                  USER="${DNSMASQUSER}_warning"
+                fi 
+
+                # If the user is still unknown, suffix with "_alert"
+                if [ "$USER" == "UNKNOWN" ] ; then
                   USER=${USER}_alert
                 fi
 
                 echo ${USER},${USERTOTAL},${MAC} >> $TOTALSDB
 
-                # Handle quotes/double-quotes
+                # Make sure quotes/double-quotes are escaped
                 USER=${USER//\'/\\\'}
                 USER=${USER//\"/\\\"}
 
