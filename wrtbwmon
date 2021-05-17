@@ -240,65 +240,72 @@ publishgraphhtm()
           ]    
         },
         options: {
+          responsive: true,
           elements: {
-            rectangle: {
+            bar: {
               borderWidth: 1,
-              barPercentage: 0.9,
-              categoryPercentage: 0.5,
             },
           },
-          responsive: true,
-          title: {
-            display: true,
-            text: \""${TITLE}"\",
-            fontSize: 18,
+          datasets: {
+            bar: {
+              barPercentage: 0.9,
+              categoryPercentage: 0.7,
+            },
           },
           scales: {
-            xAxes: [{
+            x: {
+              min: minX_"${SUFFIX}",
               ticks: {
-                min: minX_"${SUFFIX}",
-                callback: function(value, index, values) {
-                  return formatDate('"${SUFFIX}"', new Date(value * 1000));
+                callback: function(value, index) {
+                return formatDate('"${SUFFIX}"', new Date(this.getLabelForValue(value) * 1000));
                 },
               },
-            }],
-            yAxes: [{
-              scaleLabel: {
+            },
+            y: {
+              max: 1.05 * maxY_"${SUFFIX}",
+              beginAtZero: true,
+              title: {
                 display: true,
-                labelString: 'Bandwidth Used',
+                text: 'Bandwidth Used',
               },
               ticks: {
-                beginAtZero: true,
-                max: 1.05 * maxY_"${SUFFIX}",
                 callback: function(value, index, values) {
                   return getSize(value);
                 },
               },
-            }],
-          },
-          tooltips: {
-            callbacks: {
-              label: function(tooltipItem, data) {
-                var label = data.datasets[tooltipItem.datasetIndex].label || '';
-                if (label) {
-                  label += ': ';
-                }
-                label += getSize(tooltipItem.yLabel);
-                return label;
-              },
-              title: function(tooltipItem, data) {
-                return formatDate('"${SUFFIX}"', new Date(tooltipItem[0].xLabel * 1000));
-              },
-            }
-          },
-          legend: {
-            position: 'bottom',
+            },
           },
           plugins: {
+            title: {
+              display: true,
+              text: \""${TITLE}"\",
+              font: {
+                size: 18,
+              },
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  var label = context.dataset.label || '';
+                  if (label) {
+                    label += ': ';
+                  }
+                  label += getSize(context.parsed.y);
+                  return label;
+                },
+                title: function(context) {
+                  return formatDate('"${SUFFIX}"', new Date(context[0].label * 1000));
+                },
+              },
+            },
+            legend: {
+              position: 'bottom',
+            },
             zoom: {
               pan: {
                 enabled: true,
                 mode: 'xy',
+                overScaleMode: 'y',
                 speed: 1,
                 rangeMin: {
                   y: 0,
@@ -311,6 +318,7 @@ publishgraphhtm()
               zoom: {
                 enabled: true,
                 mode: 'xy',
+                overScaleMode: 'y',
                 rangeMin: {
                   y: 0,
                 },
@@ -321,11 +329,11 @@ publishgraphhtm()
                   var btn = document.getElementById('resetZoom-"${SUFFIX}"');
                   btn.style.display = 'block';
                 },
-              }
-          }
-        },
-      }
-    });</script>" >> ${HTMPATH}
+              },
+            },
+          },
+        }
+      });</script>" >> ${HTMPATH}
   fi
 
   rm -f /tmp/inrange_$$.tmp
@@ -466,12 +474,11 @@ publishdetailhtm()
       <meta http-equiv=\"Expires\" content=\"-1\">
       <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" />
       <title>"${TITLE}" Detail</title>
-      <link rel=\"stylesheet\" href=\""$CSSPATH"/Chart.min.css\" />
       <link rel=\"stylesheet\" href=\""$CSSPATH"/usage.css\" />
       <link rel=\"stylesheet\" href=\""$CSSPATH"/tabcontent/tabcontent.css\" />
       <script src=\""$JSPATH"/tabcontent.js\"></script>
       <script src=\""$JSPATH"/usage.js\"></script>
-      <script src=\""$JSPATH"/Chart.min.js\"></script>
+      <script src=\""$JSPATH"/chart.min.js\"></script>
       <script src=\""$JSPATH"/hammer.min.js\"></script>
       <script src=\""$JSPATH"/chartjs-plugin-zoom.min.js\"></script>
       <script>
@@ -1060,7 +1067,7 @@ case ${1} in
                 # If the user is unknown but there is a name defined by
                 # DNSMASQUSER, use that name instead. Update the unsuffixed
                 # name (ORIGUSER) and then suffix with "_warning".
-                if [ "$USER" == "UNKNOWN" ] && [ ! -z "$DNSMASQUSER" ]; then    
+                if [ "$USER" == "UNKNOWN" ] && [ ! -z "$DNSMASQUSER" ] && [ ! "$DNSMASQUSER" == "*" ]; then
                   ORIGUSER=$DNSMASQUSER
                   USER="${DNSMASQUSER}_warning"
                 fi 
