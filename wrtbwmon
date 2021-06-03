@@ -1243,7 +1243,7 @@ case ${1} in
 
           [ -s "${DBPATH}" ] || echo "No "${SUFFIX}" data published yet." > $HTMPATH
 
-          if [ "${SUFFIX}" == "monthly" ]; then
+          if [ "${SUFFIX}" == "yearly" ]; then
             SUFFIXCAP="Yearly"
             AXISRANGE=${AXISRANGE_YEARLY}
           elif [ "${SUFFIX}" == "monthly" ]; then
