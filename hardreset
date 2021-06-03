@@ -5,4 +5,5 @@ DIR="$( cd "$( dirname "$0" )" && pwd )"
 . $DIR/config
 
 rm -rf /tmp/usage.db /tmp/reports /tmp/www/$WWWSUBDIR/reports /tmp/www/$WWWSUBDIR/usage.htm
+rm -rf /tmp/www/$WWWSUBDIR/js /tmp/www/$WWWSUBDIR/css
 rm -rf $DIR/reports $DIR/usage.db $DIR/monthlybkup $DIR/bkup
