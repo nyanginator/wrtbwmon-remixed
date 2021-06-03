@@ -16,6 +16,9 @@ ROUTERNAME="router"
 # Subdirectory of /tmp/www/ to publish the usage.htm file to
 WWWSUBDIR=""
 
+# Device filter (typically "br0")
+DEVICEFILTER="br0"
+
 # X-axis range for each chart type
 RANGE_DAILY=21
 RANGE_WEEKLY=10

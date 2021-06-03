@@ -742,7 +742,8 @@ case ${1} in
     # Read and reset counters
     iptables -L RRDIPT -vnxZ -t filter -w > /tmp/traffic_$$.tmp
 
-    grep -v "0x0" /proc/net/arp  | while read IP TYPE FLAGS MAC MASK IFACE
+    # sed '1d' removes the first line (i.e. column headers: IP address, HW type, Flags, HW address, Mask Device)
+    grep -v "0x0" /proc/net/arp | sed '1d' | grep ${DEVICEFILTER} | while read IP TYPE FLAGS MAC MASK IFACE
     do
         # Add new data to the chart. Count in Kbs to deal with 16 bits signed
         # values (up to 2G only). Have to use temporary files because of crappy
