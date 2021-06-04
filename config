@@ -31,13 +31,20 @@ AXISRANGE_WEEKLY=5
 AXISRANGE_MONTHLY=6
 AXISRANGE_YEARLY=5
 
+# Unit of data storage. Only "KB" or "MB" are valid. This determines the maximum
+# value for any single number: 2 TB for KB, 2 PB for MB. If you expect high usage,
+# use MB. When a number exceeds (2^31 - 1) = 2147483647, integer overflow occurs,
+# resulting in a nonsensical negative number. Note that changing the value here
+# does not update previously saved number values.
+UNIT="MB"
+
 # In MB, when users on the watch list are within 2 increments of this value,
 # they will appear on the list
 WATCHLISTSTEP="1000"
 
-# You can set a limit per person in every "watch list" defined below. Each
-# watch list should include variables for: quota per person, title, and array
-# of names to watch. The name array should consist of unique 1-word names
+# You can set a limit per person (in MB) in every "watch list" defined below.
+# Each watch list should include variables for: quota per person, title, and
+# array of names to watch. The name array should consist of unique 1-word names
 # separated by spaces. For example:
 # 
 #   WATCHLISTARRAY="Calvin Phoebe Justin"

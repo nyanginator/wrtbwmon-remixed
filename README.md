@@ -1,7 +1,7 @@
 # wrtbwmon-remixed
 https://github.com/nyanginator/wrtbwmon-remixed
 
-* Adapted from https://code.google.com/p/wrtbwmon
+* Adapted from [https://code.google.com/p/wrtbwmon](https://code.google.com/p/wrtbwmon)
 * Uses [Chart.js](https://www.chartjs.org) and the [chartjs-zoom-plugin](https://github.com/chartjs/chartjs-plugin-zoom), which requires [Hammer.js](https://hammerjs.github.io)
 * Uses [SortTable](https://www.kryogenix.org/code/browser/sorttable/) by Stuart Langridge
 * Uses [Tabbed Content](http://www.menucool.com/tabbed-content) by menucool.com
@@ -17,6 +17,7 @@ Table of Contents
 * [Viewing the Usage](#viewing-the-usage)
 * [Config File](#config-file)
   * [Basic Settings](#basic-settings)
+  * [Data Storage Unit](#data-storage-unit)
   * [Watch Lists](#watch-lists)
 * [Users File](#users-file)
 * [Usage File](#usage-file)
@@ -34,6 +35,7 @@ Table of Contents
 What This Is
 ============
 `wrtbwmon` is a popular bandwidth monitoring tool for WRT-based routers. This variant is a more featured version:
+
 * Changed columns to:
   - User Name + MAC Address
   - Total Used
@@ -135,55 +137,78 @@ http://192.168.1.1/user/WWWSUBDIR/usage.htm
 
 Config File
 ===========
+The config file allows you to tweak the output according to your needs and liking.
 
 Basic Settings
 --------------
-The config file stores mostly optional information. Fill them in according to your preferences.
 * `AXISSTARTDATE` - Unix time for what the earliest date on the bar chart's X-axis should be
 * `PAGETITLE` - The page title appears at the very top of the page
 * `HEADING` - The page subtitle/heading appears in a slightly smaller font below the title
 * `DESCRIPTION` - You can include any additional text to appear below the heading here
-* `MBTOTALQUOTA` - The total quota for everybody altogether in MB, which will be shown as the denominator in Grand Total
+* `MBTOTALQUOTA` - The total quota for everybody altogether in MB, which is just for display purposes, to be shown as the denominator in Grand Total
 * `ROUTERNAME` - Not really essential, but if you plan on ever merging the HTML output from multiple routers onto the same page, you will need a unique name for each router
 * `WWWSUBDIR` - Optional subdirectory for the web directory
+* `DEVICEFILTER` - Typically will be `br0`, unless you want to track a specific set of devices with a different identifier. You can see the available device types by running `cat /proc/net/arp`.
 
 Range size (total X-axis length) for each chart:
-* `RANGE_DAILY`
-* `RANGE_WEEKLY`
-* `RANGE_MONTHLY`
-* `RANGE_YEARLY`
+
+* `RANGE_DAILY` (# of days)
+* `RANGE_WEEKLY` (# of weeks)
+* `RANGE_MONTHLY` (# of months)
+* `RANGE_YEARLY` (# of years)
 
 Number of ticks visible (on the X-axis) before having to zoom/pan/drag the chart:
-* `AXISRANGE_DAILY`
-* `AXISRANGE_WEEKLY`
-* `AXISRANGE_MONTHLY`
-* `AXISRANGE_YEARLY`
+
+* `AXISRANGE_DAILY` (# of days)
+* `AXISRANGE_WEEKLY` (# of weeks)
+* `AXISRANGE_MONTHLY` (# of months)
+* `AXISRANGE_YEARLY` (# of years)
+
+Data Storage Unit
+-----------
+```bash
+UNIT="KB"  # or "MB"
+```
+
+Valid settings are `KB` and `MB`. This essentially determines the maximum value for any given number, whether it be for a download, upload, or total. Integer variables in the script are limited to a range of [0, 2147483647], so the maximum value would be either 2147483647 KB (2 TB) or 2147483647 MB (2 PB).
+
+If you expect high usage, then you should set this to `MB`. Otherwise, when a number exceeds 2147483647, integer overflow will occur, resulting in a nonsensical negative number. Plan to accommodate the highest yearly grand total that you expect to have.
+
+There are some things to keep in mind:
+
+* When changing from MB to KB or vice versa, any previously saved numbers (i.e. in the `.db` files) are not adjusted, so you may want to do a `hardreset` when changing. For example, 5 MB becomes 5 KB if you change this setting from MB to KB. This setting merely tells the script how to treat the numbers it finds in the `.db` files. It does not do any conversions.
+* In order for bandwidth to be counted for a certain device, its `iptables` counter must have recorded as least 1 unit of data (i.e. either 1 KB or 1 MB, depending on the `UNIT` setting) since it was last zeroed out. This is because numbers are *always rounded down* to the nearest unit. For example, say `UNIT="MB"` and you call `/tmp/mnt/sda1/update` every 4 minutes. If a device never exceeds 1 MB within each of those 4-minute intervals, its usage will always be rounded down to 0 and thus never be counted. So you should tweak the `update` interval according to the usage rate or habits of your users.
+* Wherever there is a partial unit (i.e. < 1 KB or < 1 MB), the number is always rounded down because floating point numbers are not possible in shell scripts. For example, if `UNIT="KB"`, 0.5 KB would be considered 0 KB. If `UNIT="MB"`, 4.8 MB would be considered 4 MB. The counter only records the number of full units used.
+
 
 Watch Lists
 -----------
 The Watch List is a feature that automatically turns on/off Internet access for devices matching a certain search string (i.e. a user's name). Devices that should be turned on/off together must all be set in `/tmp/users.txt` with this search string. For example, say Calvin has 3 devices. In `users.txt`, they might be identified as `Calvin Phone`, `Calvin iPad`, and `Calvin Laptop`. In `config`, `Calvin` should be in the Watch List array.
 
-```
+```bash
 STUDENTWATCHLISTARRAY="Calvin Phoebe Justin"
 ```
 
 If the total usage of Calvin's devices is over the set quota, then all 3 devices will have their connection shut off. If you want to grant access or restore access to a user regardless of the quota, prefix their name with `SKIP_`.
 
-```
+```bash
 STUDENTWATCHLISTARRAY="SKIP_Calvin Phoebe _Justin SKIP_admin"
 ```
 
-Remember that this is a space-separated array (`ash` is limited), so naturally the names themselves cannot have spaces. Names are case-insensitive. Also note that removing a name from the array will not automatically restore access. You must explicitly restore access by adding `SKIP_` to the name in the array and then running `/tmp/mnt/sda1/publish`. Alternatively, you can delete a name from the array, run `iptables -F` (restores access for everybody), and then `/tmp/mnt/sda1/publish` (reimposes Watch List restrictions).
+Remember that this is a space-separated array (`ash` is limited), so naturally the names themselves cannot have spaces. Names are case-insensitive. Also note that **removing a name from the array will not automatically restore access**. You must explicitly restore access by either:
 
-Watch Lists will show up at the top of the usage page when users are either close to or have exceeded their quota. The `config` file has two sample Watch Lists ("Students" and "Guests") for your reference. You can define as many Watch Lists as you want, but be sure to update the `wrtbwmon` script to include any new ones you add. Specifically, look for this line:
+1. Adding `SKIP_` to the name in the array and then running `/tmp/mnt/sda1/publish`.
+2. Delete the name from the array, run `iptables -F` (restores access for everybody) and then `/tmp/mnt/sda1/publish` (reimposes Watch List restrictions).
 
-```
+Watch Lists will show up at the top of the usage page when users are either close to or have exceeded their quota. The `config` file has two sample Watch Lists ("Students" and "Guests") for your reference. Note how all data numbers specified in the config file are in MB. You can define as many Watch Lists as you want, but be sure to update the `wrtbwmon` script to include any new ones you add. Specifically, look for this line:
+
+```bash
 # Publish individual watch lists
 publishWatchList "${TOTALSDB}" "${TMPUSAGEHTM}" "${STUDENTWATCHLISTARRAY}" "${MBQUOTAPERSTUDENT}" "${STUDENTWATCHLISTTITLE}"
 ```
 Just copy-and-paste this line and update the last 3 variables to whatever you set in `config`. In this example:
 
-```
+```bash
 MBQUOTAPERSTUDENT="10000"                     # 10G limit per student
 STUDENTWATCHLISTTITLE="Students"              # Title to display
 STUDENTWATCHLISTARRAY="Calvin Phoebe Justin"  # Who to watch
@@ -191,7 +216,7 @@ STUDENTWATCHLISTARRAY="Calvin Phoebe Justin"  # Who to watch
 
 Also in `config`, you can set a "step" value, which defines when to show users who are close to the quota limit:
 
-```
+```bash
 WATCHLISTSTEP="1000"  # When users are within 2 increments of this value (MB), they will show up in the list
 ```
 
@@ -274,7 +299,7 @@ The `COUNTERSTART` keyword specifies that the last value on this line is the Uni
 
 After resetting, all devices whose access was shut off by the Watch List will have their connections restored.
 
-You can also do a hard reset, which will permanently delete all usage data, reports, HTML files, and backups:
+You can also do a hard reset, which will permanently delete all usage data, reports, HTML/JS/CSS files, and backups:
 
 ```
 $ /tmp/mnt/sda1/hardreset

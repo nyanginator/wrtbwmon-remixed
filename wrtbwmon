@@ -28,6 +28,14 @@ DATEIDWEEK=$(date +\%V-\%Y -d @${DATE})
 DATEIDMONTH=$(date +\%m-\%Y -d @${DATE})
 DATEIDYEAR=$(date +\%Y -d @${DATE})
 
+# getSize() in the JS expects an argument in bytes, so append this variable as
+# a suffix to convert values from the .db files into bytes
+UNITTOBYTES=""
+if  [ "${UNIT}" == "MB" ]; then
+   UNITTOBYTES=000000
+elif  [ "${UNIT}" == "KB" ]; then
+   UNITTOBYTES=000
+fi
 
 LAN_IFACE=$(nvram get lan_ifname)
 
@@ -161,9 +169,10 @@ publishgraphhtm()
           PEAKUSAGE_OUT=$(echo ${FOUND} | cut -f5 -s -d, )
           OFFPEAKUSAGE_IN=$(echo ${FOUND} | cut -f6 -s -d, )
           OFFPEAKUSAGE_OUT=$(echo ${FOUND} | cut -f7 -s -d, )
-          DOWNTOTAL=$((PEAKUSAGE_IN + OFFPEAKUSAGE_IN))000
-          UPTOTAL=$((PEAKUSAGE_OUT + OFFPEAKUSAGE_OUT))000
-          GRANDTOTAL=$((PEAKUSAGE_IN+OFFPEAKUSAGE_IN+PEAKUSAGE_OUT+OFFPEAKUSAGE_OUT))000
+
+          DOWNTOTAL=$((PEAKUSAGE_IN + OFFPEAKUSAGE_IN))${UNITTOBYTES}
+          UPTOTAL=$((PEAKUSAGE_OUT + OFFPEAKUSAGE_OUT))${UNITTOBYTES}
+          GRANDTOTAL=$((PEAKUSAGE_IN+OFFPEAKUSAGE_IN+PEAKUSAGE_OUT+OFFPEAKUSAGE_OUT))$UNITTOBYTES
 
           # Write out the data for this tick mark into the JS array
           echo ${CURRDATE}', '${GRANDTOTAL}', '${DOWNTOTAL}', '${UPTOTAL}', ' >> ${HTMPATH}
@@ -606,9 +615,13 @@ publishWatchList()
       `
       fi
 
+      # Convert to MB if unit is KB, since config file numbers are all in MB
+      if  [ "${UNIT}" == "KB" ]; then
+        USERALLDEVICESTOTAL=$((USERALLDEVICESTOTAL / 1000))
+      fi
+
       if [ $USERALLDEVICESTOTAL -ne 0 ]; then
-  
-        if [ "${USERALLDEVICESTOTAL}" -gt "${MBQUOTAPER}"000 ]; then
+        if [ "${USERALLDEVICESTOTAL}" -gt "${MBQUOTAPER}" ]; then
           echo "QUOTA : "${WATCHLISTTITLE}" : "${name}" has reached quota limit!"
           if [ $SKIPNAME -eq 0 ] ; then
             cat /tmp/uadt_macs.tmp | while IFS= read MAC
@@ -658,6 +671,9 @@ publishWatchList()
     echo 'var watchListOverA = new Array();
     var watchListOverB = new Array();
     var watchListOverC = new Array();' >> ${WATCHLISTHTM}
+
+    # Keep in mind that all size values in the JS are in bytes, so convert
+    # MBQUOTEPER accordingly
     echo "for (var key in watchList) {
     if (watchList[key] > "${MBQUOTAPER}"000000) {
       var skipstr = \""${SKIPSTR}"\";
@@ -670,10 +686,10 @@ publishWatchList()
     }
     watchListOverA.push(keyLabel + ' ('+getSize(watchList[key])+')');
   }
-      else if (watchList[key] > "$((MBQUOTAPER - WATCHLISTSTEP))"000000 && "${MBQUOTAPER}" > 1000) {
+      else if (watchList[key] > "$((MBQUOTAPER - WATCHLISTSTEP))"000000 && "${MBQUOTAPER}" > ${WATCHLISTSTEP}) {
         watchListOverB.push(key + ' ('+getSize(watchList[key])+')');
       }
-    else if (watchList[key] > "$((MBQUOTAPER - (WATCHLISTSTEP * 2)))"000000 && "${MBQUOTAPER}" > 2000) {
+  else if (watchList[key] > "$((MBQUOTAPER - (WATCHLISTSTEP * 2)))"000000 && "${MBQUOTAPER}" > $((WATCHLISTSTEP * 2))) {
       watchListOverC.push(key + ' ('+getSize(watchList[key])+')');
     }
   }" >> ${WATCHLISTHTM}
@@ -745,9 +761,8 @@ case ${1} in
     # sed '1d' removes the first line (i.e. column headers: IP address, HW type, Flags, HW address, Mask Device)
     grep -v "0x0" /proc/net/arp | sed '1d' | grep ${DEVICEFILTER} | while read IP TYPE FLAGS MAC MASK IFACE
     do
-        # Add new data to the chart. Count in Kbs to deal with 16 bits signed
-        # values (up to 2G only). Have to use temporary files because of crappy
-        # busybox shell (ash)
+        # Add new data to the chart. Have to use temporary files because of
+        # crappy busybox shell (ash)
 
         # Get around this problem with Solution 3: http://www.linuxprogrammingblog.com/pipe-in-bash-can-be-a-trap
         IN=`
@@ -774,8 +789,18 @@ case ${1} in
         [ "${IN}" == "" ] && IN=0
         [ "${OUT}" == "" ] && OUT=0
 
+        if  [ "${UNIT}" == "MB" ]; then
+          # Round-down if size is less than 1 MB. Can't use floats.
+          [ ${IN} -lt 1000 ] && IN=0
+          [ ${OUT} -lt 1000 ] && OUT=0
+
+          # Divide again to MB
+          IN=$((${IN}/1000))
+          OUT=$((${OUT}/1000))
+        fi
+
         if ([ ! ${IN} == 0 ] || [ ! ${OUT} == 0 ]);  then
-            echo "DEBUG : New traffic for ${MAC} since last update : ${IN}k:${OUT}k"
+            echo "DEBUG : New traffic for ${MAC} since last update : Down: ${IN} ${UNIT}, Up: ${OUT} ${UNIT}"
         
             LINE=$(grep ${MAC} ${2})
             if [ -z "${LINE}" ]; then
@@ -1084,7 +1109,7 @@ case ${1} in
                 USER=${USER//\'/\\\'}
                 USER=${USER//\"/\\\"}
 
-                echo "\"${USER}\",\"${MAC}\",${PEAKUSAGE_IN}000,${PEAKUSAGE_OUT}000,${OFFPEAKUSAGE_IN}000,${OFFPEAKUSAGE_OUT}000,${USERTOTAL}000,${DOWNTOTAL}000,${UPTOTAL}000,\"${LASTUPDATE}\"" >> $TMPUSAGEHTM
+                echo "\"${USER}\",\"${MAC}\",${PEAKUSAGE_IN}${UNITTOBYTES},${PEAKUSAGE_OUT}${UNITTOBYTES},${OFFPEAKUSAGE_IN}${UNITTOBYTES},${OFFPEAKUSAGE_OUT}${UNITTOBYTES},${USERTOTAL}${UNITTOBYTES},${DOWNTOTAL}${UNITTOBYTES},${UPTOTAL}${UNITTOBYTES},\"${LASTUPDATE}\"" >> $TMPUSAGEHTM
 
                 #########################################################
                 ### Publish to daily/weekly/monthly/yearly HTML pages ###
@@ -1150,7 +1175,7 @@ case ${1} in
                     TODAYUP=$((TODAYPEAKUSAGE_OUT + TODAYOFFPEAKUSAGE_OUT))
                     TODAYTOTAL=$((TODAYDOWN + TODAYUP))
 
-                    echo ","${TODAYTOTAL}000,${TODAYDOWN}000,${TODAYUP}000 >> $TMPUSAGEHTM
+                    echo ","${TODAYTOTAL}${UNITTOBYTES},${TODAYDOWN}${UNITTOBYTES},${TODAYUP}${UNITTOBYTES} >> $TMPUSAGEHTM
                   else
                     echo ",0,0,0" >> $TMPUSAGEHTM
                   fi
@@ -1188,9 +1213,9 @@ case ${1} in
 
         # Grab last line of .tmp file; has the numbers for Grand Down/Up/Total
         GRANDNUMSLINE=`tail -1 /tmp/sorted_$$.tmp | head -1`
-        GRANDDOWN=$(echo ${GRANDNUMSLINE} | cut -f10 -s -d, )000
-        GRANDUP=$(echo ${GRANDNUMSLINE} | cut -f11 -s -d, )000
-        GRANDTOTAL=$(echo ${GRANDNUMSLINE} | cut -f12 -s -d, )000
+        GRANDDOWN=$(echo ${GRANDNUMSLINE} | cut -f10 -s -d, )${UNITTOBYTES}
+        GRANDUP=$(echo ${GRANDNUMSLINE} | cut -f11 -s -d, )${UNITTOBYTES}
+        GRANDTOTAL=$(echo ${GRANDNUMSLINE} | cut -f12 -s -d, )${UNITTOBYTES}
         GRANDPEAKIN=$(echo ${GRANDNUMSLINE} | cut -f13 -s -d, )
         GRANDPEAKOUT=$(echo ${GRANDNUMSLINE} | cut -f14 -s -d, )
         GRANDOFFPEAKIN=$(echo ${GRANDNUMSLINE} | cut -f15 -s -d, )
@@ -1214,7 +1239,7 @@ case ${1} in
         echo "if (daysElapsed > 0 && daysElapsed > 1) divisor = daysElapsed;" >> $TMPUSAGEHTM
         echo "document.write('<p>"${DESCRIPTION}"</p>');" >> $TMPUSAGEHTM
 
-        echo "document.write('<table id=\"summarytable\"><tr onclick=\"goToTotalsDetail()\"><th>GRAND TOTAL<br>for <span class=\"warning\">'+parseFloat(daysElapsed).toFixed(1) +' day(s)</span>.</th><th>TOTAL<br>DOWN</th><th>TOTAL<br>UP</th><th>AVERAGE<br>DAILY</th><th>AVERAGE<br> DAILY<br>DOWN</th><th>AVERAGE<br>DAILY<br>UP</th><th>TODAY<br>TOTAL</th><th>TODAY<br>DOWN</th><th>TODAY<br>UP</th><tr onclick=\"goToTotalsDetail()\"><td class=\"hilite\">'+getSize("${GRANDTOTAL}")+' / '+mbTotalQuota+'</td><td>'+getSize("${GRANDDOWN}")+' &#x25BC;</td><td>'+getSize("${GRANDUP}")+' &#x25B2;</td><td class="hilite">'+getSize("${GRANDTOTAL}"/divisor)+'</td><td>'+getSize("${GRANDDOWN}"/divisor)+' &#x25BC;</td><td>'+getSize("${GRANDUP}"/divisor)+' &#x25B2;</td><td class=\"hilite\">'+getSize("${TODAYTOTAL}000")+'</td><td>'+getSize("${TODAYDOWN}000")+' &#x25BC;</td><td>'+getSize("${TODAYUP}000")+' &#x25B2;</td></tr></table>');" >> $TMPUSAGEHTM
+        echo "document.write('<table id=\"summarytable\"><tr onclick=\"goToTotalsDetail()\"><th>GRAND TOTAL<br>for <span class=\"warning\">'+parseFloat(daysElapsed).toFixed(1) +' day(s)</span>.</th><th>TOTAL<br>DOWN</th><th>TOTAL<br>UP</th><th>AVERAGE<br>DAILY</th><th>AVERAGE<br> DAILY<br>DOWN</th><th>AVERAGE<br>DAILY<br>UP</th><th>TODAY<br>TOTAL</th><th>TODAY<br>DOWN</th><th>TODAY<br>UP</th><tr onclick=\"goToTotalsDetail()\"><td class=\"hilite\">'+getSize("${GRANDTOTAL}")+' / '+mbTotalQuota+'</td><td>'+getSize("${GRANDDOWN}")+' &#x25BC;</td><td>'+getSize("${GRANDUP}")+' &#x25B2;</td><td class="hilite">'+getSize("${GRANDTOTAL}"/divisor)+'</td><td>'+getSize("${GRANDDOWN}"/divisor)+' &#x25BC;</td><td>'+getSize("${GRANDUP}"/divisor)+' &#x25B2;</td><td class=\"hilite\">'+getSize("${TODAYTOTAL}${UNITTOBYTES}")+'</td><td>'+getSize("${TODAYDOWN}${UNITTOBYTES}")+' &#x25BC;</td><td>'+getSize("${TODAYUP}${UNITTOBYTES}")+' &#x25B2;</td></tr></table>');" >> $TMPUSAGEHTM
         echo "document.write('<p><form id=\"search-form\"><b>Filter:</b> <span class=\"text-input-wrapper\"><input id=\"filterquery-"${ROUTERNAME}"\" onkeyup=\'filter(this, \"filterclearbtn-"${ROUTERNAME}"\", \"usertable-"${ROUTERNAME}"\")\' type=\"text\" autofocus><span onclick=\'resetfilter(\"filterclearbtn-"${ROUTERNAME}"\", \"filterquery-"${ROUTERNAME}"\", \"usertable-"${ROUTERNAME}"\")\' id=\"filterclearbtn-"${ROUTERNAME}"\" title=\"Clear\">&times;</span></span><span class=\"text-small\"> &larr; Type your name here to see your individual total.</span></form></p>');" >> $TMPUSAGEHTM
         echo "document.write('<table id=\"usertable-"${ROUTERNAME}"\" class=\"usertable sortable\"><tr><th>User</th><th>Total<br>used</th><th>Total<br>down</th><th>Total<br>up</th><!-- <th>Peak<br>down</th><th>Peak<br>up</th><th>Offpeak<br>down</th><th>Offpeak<br>up</th> --><th>Average<br>Daily<br>Total</th><th>Average<br>Daily<br>Down</th><th>Average<br>Daily<br>Up</th><th>Today<br>Total</th><th>Today<br>Down</th><th>Today<br>Up</th><th>Last update</th></tr>');" >> $TMPUSAGEHTM
 
