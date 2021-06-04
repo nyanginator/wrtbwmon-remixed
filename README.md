@@ -103,10 +103,10 @@ Cron
 Go to Administration > Management and find the `cron` section. At minimum, you should have 3 lines:
 ```
 * * * * * root /tmp/mnt/sda1/setup
-*/4 * * * * root /tmp/mnt/sda1/update
-*/15 * * * * root /tmp/mnt/sda1/publish
+*/30 * * * * root /tmp/mnt/sda1/update
+45 * * * * root /tmp/mnt/sda1/publish
 ```
-This will keep monitoring the traffic every minute (`setup`), update the usage numbers every 4 minutes (`update`), and publish to the router's webpage every 15 minutes (`publish`). You can SSH into the router to manually update and publish using the command:
+This will keep monitoring the traffic every minute (`setup`), update the usage numbers every 30 minutes (`update`), and publish to the router's webpage every hour (`publish`) when the minute is 45. You can SSH into the router to manually update and publish using the command:
 ```
 $ /tmp/mnt/sda1/unp
 ```
@@ -177,7 +177,7 @@ If you expect high usage, then you should set this to `MB`. Otherwise, when a nu
 There are some things to keep in mind:
 
 * When changing from MB to KB or vice versa, any previously saved numbers (i.e. in the `.db` files) are not adjusted, so you may want to do a `hardreset` when changing. For example, 5 MB becomes 5 KB if you change this setting from MB to KB. This setting merely tells the script how to treat the numbers it finds in the `.db` files. It does not do any conversions.
-* In order for bandwidth to be counted for a certain device, its `iptables` counter must have recorded as least 1 unit of data (i.e. either 1 KB or 1 MB, depending on the `UNIT` setting) since it was last zeroed out. This is because numbers are *always rounded down* to the nearest unit. For example, say `UNIT="MB"` and you call `/tmp/mnt/sda1/update` every 4 minutes. If a device never exceeds 1 MB within each of those 4-minute intervals, its usage will always be rounded down to 0 and thus never be counted. So you should tweak the `update` interval according to the usage rate or habits of your users.
+* In order for bandwidth to be counted for a certain device, its `iptables` counter must have recorded as least 1 unit of data (i.e. either 1 KB or 1 MB, depending on the `UNIT` setting) since it was last zeroed out. This is because numbers are *always rounded down* to the nearest unit. For example, say `UNIT="MB"` and you call `/tmp/mnt/sda1/update` very frequently, every 5 minutes. If a device never exceeds 1 MB within each of those 5-minute intervals, its usage will always be rounded down to 0 and thus never be counted. The greater the interval, the more likely you will avoid this problem of rounding to zero, because there is a better chance that a user will use more than 1 unit of data in a longer time period. Of course, this means you would also have to wait longer for updates to happen.
 * Wherever there is a partial unit (i.e. < 1 KB or < 1 MB), the number is always rounded down because floating point numbers are not possible in shell scripts. For example, if `UNIT="KB"`, 0.5 KB would be considered 0 KB. If `UNIT="MB"`, 4.8 MB would be considered 4 MB. The counter only records the number of full units used.
 
 
